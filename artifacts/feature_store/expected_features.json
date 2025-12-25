@@ -1,0 +1,21 @@
+[
+    "Employee_number",
+    "Employee_name",
+    "Employee_age",
+    "Maritial_Status",
+    "Current_Salary",
+    "Number_of_Children",
+    "years_experience",
+    "past_projects",
+    "current_projects",
+    "Divorced_earlier",
+    "Father_alive",
+    "Mother_alive",
+    "performance_rating",
+    "Education_level",
+    "Department",
+    "Role",
+    "Job_Satisfaction",
+    "Work_Life_Balance",
+    "is_outlier"
+]

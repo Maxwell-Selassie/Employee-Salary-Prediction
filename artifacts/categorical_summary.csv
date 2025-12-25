@@ -1,0 +1,9 @@
+,count,unique,top,freq,missing_count,missing_pct,unique_count,cardinality_ratio
+Employee_name,50000,380,Daniel Kumar,166,0,0.0,380,0.76
+Maritial_Status,50000,2,True,27507,0,0.0,2,0.0
+Divorced_earlier,50000,2,No,37446,0,0.0,2,0.0
+Father_alive,50000,2,Yes,42509,0,0.0,2,0.0
+Mother_alive,50000,2,Yes,40076,0,0.0,2,0.0
+Education_level,50000,5,Bachelor's,22633,0,0.0,5,0.01
+Department,50000,7,Support,7244,0,0.0,7,0.01
+Role,50000,15,Customer Specialist,3628,0,0.0,15,0.03

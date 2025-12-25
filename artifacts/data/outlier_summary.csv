@@ -1,0 +1,12 @@
+,count,percentage,lower_bound,upper_bound,Q1,Q3,IQR
+Employee_number,0.0,0.0,-14998.5,84999.5,22500.75,47500.25,24999.5
+Employee_age,271.0,0.54,8.5,60.5,28.0,41.0,13.0
+Current_Salary,636.0,1.27,-26672.5,134003.5,33581.0,73750.0,40169.0
+Number_of_Children,0.0,0.0,-3.0,5.0,0.0,2.0,2.0
+years_experience,231.0,0.46,-21.0,35.0,0.0,14.0,14.0
+past_projects,0.0,0.0,-9.0,23.0,3.0,11.0,8.0
+current_projects,0.0,0.0,-0.5,3.5,1.0,2.0,1.0
+performance_rating,2553.0,5.11,1.5,5.5,3.0,4.0,1.0
+Job_Satisfaction,0.0,0.0,-4.24,18.2,4.17,9.79,5.61
+Work_Life_Balance,0.0,0.0,-4.97,13.56,1.98,6.61,4.63
+is_outlier,714.0,1.43,0.0,0.0,0.0,0.0,0.0

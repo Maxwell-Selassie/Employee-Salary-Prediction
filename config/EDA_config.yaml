@@ -1,0 +1,125 @@
+# Project : Stroke Prediction
+# Author : Maxwell Selassie Hiamatsu
+
+# EDA pipeline configuration
+# Production grade EDA configuration for stroke prediction pipeline
+
+# data configuration
+data:
+  raw_path: 'data/raw/Employee_Complete_Dataset.csv'
+  artifcacts_path: 'artifacts/'
+  artifact_data_path_missing: 'artifacts/data/missing_values.csv'
+  artifact_data_path_outliers: 'artifacts/data/outlier_summary.csv'
+
+  # column specifications
+  target_column: 'Current_Salary'
+  id_column: 'Employee_number'
+
+  optimize_dtypes: true
+
+  # expected columns
+  expected_columns:
+  - 'Employee_number'
+  - 'Employee_name'
+  - 'Employee_age'
+  - 'Maritial_Status'
+  - 'Current_Salary'
+  - 'Number_of_Children'
+  - 'years_experience'
+  - 'past_projects'
+  - 'current_projects'
+  - 'Divorced_earlier'
+  - 'Father_alive'
+  - 'Mother_alive'
+  - 'performance_rating'
+  - 'Education_level'
+  - 'Department'
+  - 'Role'
+  - 'Job_Satisfaction'
+  - 'Work_Life_Balance'
+  - 'is_outlier'
+
+  save_expected_columns: true
+  feature_store_path: 'artifacts/feature_store/expected_features.json'
+
+
+  # categorical columns to encode
+  categorical_columns:
+  - 'Employee_name'
+  - 'Divorced_earlier'
+  - 'Father_alive'
+  - 'Mother_alive'
+  - 'Education_level'
+  - 'Department'
+  - 'Role'
+
+# logging configuration
+logging:
+  log_dir: 'logs/'
+  log_level: 'INFO'
+  max_bytes: 10485760
+  backup_count: 7
+  format: '%(asctime)s -%(name) %(levelname)s -%(funcName)s:%(lineno)d - %(message)s'
+  date_format: '%Y-%m-%d %H:%M:%S'
+
+# output configuration
+output:
+  plots_dir: 'artifacts/plots/'
+  plot_format: 'png'
+  plot_dpi: 300
+  save_artifacts: true
+  artifact_format: 'joblib'
+
+# statistical configuration
+statistics:
+  confidence_level: 0.95
+  significance_level: 0.05
+
+# minimum sample size for tests
+min_sample_size: 30
+
+# normality test sample size
+normality_test_sample_size: 5000
+
+# effect size threshold (cohen's d)
+effect_size_small: 0.2
+effect_size_medium: 0.5
+effect_size_large: 0.8
+
+
+# visualization configuration
+visualization:
+  style: 'seaborn-v0_8-darkgrid'
+  context: 'notebook'
+  palette: 'set2'
+  figure_size_multivariate: [15,10]
+  figure_size_univariate: [18,10]
+
+  # save options
+  save_plots: true
+  show_plots: true
+
+
+  # plot specific settings
+  histogram:
+    kde: true
+    alpha: 0.7
+
+  boxplot:
+    showmeans: true
+    meanline: true
+
+  heatmap:
+    method: 'spearman'
+
+
+data_quality:
+  missing_threshold_critical: 0.30
+  missing_threshold_warning: 0.05
+
+  # duplicate handling
+  check_duplicates: true
+
+  # outlier handling
+  detect_outliers: true
+  outlier_report: true

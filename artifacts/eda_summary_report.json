@@ -1,0 +1,54 @@
+{
+  "dataset_info": {
+    "rows": 50000,
+    "columns": 19,
+    "memory_mb": 19.83,
+    "numeric_columns": 11,
+    "categorical_columns": 8
+  },
+  "data_quality": {
+    "missing_percentage": 0.0,
+    "duplicate_percentage": 0.0
+  },
+  "pipeline_results": {
+    "overview": {
+      "shape": [
+        50000,
+        19
+      ],
+      "numeric_columns": [
+        "Employee_age",
+        "Current_Salary",
+        "Number_of_Children",
+        "years_experience",
+        "past_projects",
+        "current_projects",
+        "performance_rating",
+        "Job_Satisfaction",
+        "Work_Life_Balance",
+        "is_outlier"
+      ],
+      "categorical_columns": [
+        "Employee_name",
+        "Maritial_Status",
+        "Divorced_earlier",
+        "Father_alive",
+        "Mother_alive",
+        "Education_level",
+        "Department",
+        "Role"
+      ]
+    },
+    "quality": {
+      "missing_columns": 0,
+      "duplicate_count": 0,
+      "outlier_columns": 11
+    },
+    "visualizations": {
+      "numeric_distributions": "success",
+      "categorical_distributions": "success",
+      "heatmap": "success",
+      "boxplots": "success"
+    }
+  }
+}
