@@ -5,9 +5,9 @@ FIXED: Improved error handling, added type hints, better validation
 
 import pandas as pd
 import numpy as np
-from typing import Dict, List, Tuple, Any, Optional, Union
+from typing import Dict, List, Tuple, Any
 from pathlib import Path
-import logging
+import mlflow
 import sys
 
 # NEW: Import LoggerMixin for consistent logging
@@ -20,7 +20,7 @@ class DataExecutionError(Exception):
     pass
 
 
-class DataOverview(LoggerMixin):  # ← CHANGED: Now inherits from LoggerMixin
+class DataOverview(LoggerMixin):  
     """
     Perform initial data overview and validation.
     
@@ -28,7 +28,7 @@ class DataOverview(LoggerMixin):  # ← CHANGED: Now inherits from LoggerMixin
     numeric and categorical columns.
     """
     
-    def __init__(self, config_path: Union[Path, str]):
+    def __init__(self, config_path: str | Path):
         """
         Initialize DataOverview.
         
@@ -39,7 +39,7 @@ class DataOverview(LoggerMixin):  # ← CHANGED: Now inherits from LoggerMixin
         self.logger = self.setup_class_logger('data_overview', self.config, 'logging')
         self.df = None  
     
-    def _load_config(self, config_path: Union[Path, str]) -> Dict:
+    def _load_config(self, config_path: str | Path) -> Dict:
         """
         Load configuration from YAML file.
         
@@ -55,6 +55,9 @@ class DataOverview(LoggerMixin):  # ← CHANGED: Now inherits from LoggerMixin
         """
         try:
             config = read_yaml(config_path)
+            # log eda yaml configuration
+            mlflow.log_artifact(config_path)
+
             self._validate_config(config)  
             return config
         except FileNotFoundError:
@@ -104,11 +107,18 @@ class DataOverview(LoggerMixin):  # ← CHANGED: Now inherits from LoggerMixin
             
             df = read_csv(file_path, optimize_dtypes=True)
             
+            
             if df.empty:
                 raise pd.errors.EmptyDataError('Loaded DataFrame is empty')
             
             self.logger.info(f'DataFrame successfully loaded: {df.shape[0]} rows × {df.shape[1]} columns')
-            self.df = df  # NEW: Store for later use
+
+            # log dataset metadata to MLflow
+            mlflow.log_param('Dataset_name', 'Employee_Complete_Dataset.csv(1)')
+            mlflow.log_param('n_rows', len(df))
+            mlflow.log_param('n_columns', len(df.columns))
+
+            self.df = df  
             return df
         
         except FileNotFoundError as e:
@@ -149,6 +159,7 @@ class DataOverview(LoggerMixin):  # ← CHANGED: Now inherits from LoggerMixin
             unexpected_cols = [col for col in df.columns if col not in expected_columns]
             if unexpected_cols:
                 self.logger.warning(f'Unexpected columns detected: {unexpected_cols}')
+                raise ValueError(f'Unexpected columns: {unexpected_cols}')
             
             # NEW: Check for duplicate columns
             if df.columns.duplicated().any():
@@ -159,10 +170,13 @@ class DataOverview(LoggerMixin):  # ← CHANGED: Now inherits from LoggerMixin
             self.logger.info('✓ Data validation passed')
             
             # Save feature names if configured
-            if self.config['data'].get('save_expected_columns', False):
+            if self.config['data'].get('save_expected_columns', True):
                 feature_names_path = self.config['data']['feature_store_path']
                 write_json(expected_columns, feature_names_path, indent=4)
                 self.logger.info(f'Saved feature names to {feature_names_path}')
+
+            # log expected feature names to MLflow
+            mlflow.log_artifact(feature_names_path)
         
         except ValueError as e:
             self.logger.error(f'Validation error: {e}')
@@ -202,21 +216,25 @@ class DataOverview(LoggerMixin):  # ← CHANGED: Now inherits from LoggerMixin
         num_summary['missing_count'] = df[numeric_cols].isnull().sum()
         num_summary['missing_pct'] = (num_summary['missing_count'] / len(df) * 100).round(2)
         
-        # NEW: Add skewness and kurtosis
+        # Add skewness and kurtosis
         num_summary['skewness'] = df[numeric_cols].skew()
         num_summary['kurtosis'] = df[numeric_cols].kurtosis()
         
         self.logger.info(f'✓ Analyzed {len(numeric_cols)} numeric columns')
+        mlflow.log_param('no_of_numeric_cols', len(numeric_cols))
         
-        # NEW: Save summary
+        # Save summary
         summary_path = Path(self.config.get('output', {}).get('artifacts_dir', 'artifacts')) / 'numeric_summary.csv'
         ensure_directory(summary_path.parent)
         num_summary.to_csv(summary_path)
         self.logger.info(f'Saved numeric summary to {summary_path}')
+
+        # log numeric summary to mlflow
+        mlflow.log_artifact(summary_path)
         
         return num_summary, numeric_cols
     
-    def _analyze_categorical_cols(self, df: pd.DataFrame) -> Tuple[pd.DataFrame, List[str]]:  # CHANGED: Return tuple
+    def _analyze_categorical_cols(self, df: pd.DataFrame) -> Tuple[pd.DataFrame, List[str]]:  
         """
         Analyze categorical columns.
         
@@ -229,6 +247,7 @@ class DataOverview(LoggerMixin):  # ← CHANGED: Now inherits from LoggerMixin
         self.logger.info('Analyzing categorical columns...')
         
         cat_cols = df.select_dtypes(exclude=[np.number]).columns.tolist()
+        mlflow.log_param('no_of_cat_cols', len(cat_cols))
         
         if not cat_cols:
             self.logger.warning('No categorical columns found')
@@ -239,17 +258,20 @@ class DataOverview(LoggerMixin):  # ← CHANGED: Now inherits from LoggerMixin
         cat_summary['missing_count'] = df[cat_cols].isnull().sum()
         cat_summary['missing_pct'] = (cat_summary['missing_count'] / len(df) * 100).round(2)
         
-        # NEW: Add cardinality info
+        # Add cardinality info
         cat_summary['unique_count'] = df[cat_cols].nunique()
         cat_summary['cardinality_ratio'] = (cat_summary['unique_count'] / len(df) * 100).round(2)
         
         self.logger.info(f'✓ Analyzed {len(cat_cols)} categorical columns')
         
-        # NEW: Save summary
+        # Save summary
         summary_path = Path(self.config.get('output', {}).get('artifacts_dir', 'artifacts')) / 'categorical_summary.csv'
         ensure_directory(summary_path.parent)
         cat_summary.to_csv(summary_path)
         self.logger.info(f'Saved categorical summary to {summary_path}')
+
+        # log categorical summary to MLflow
+        mlflow.log_artifact(cat_summary)
         
         return cat_summary, cat_cols
     
@@ -257,9 +279,10 @@ class DataOverview(LoggerMixin):  # ← CHANGED: Now inherits from LoggerMixin
         """Get configuration dictionary."""
         return self.config
     
-    def get_dataframe(self) -> Optional[pd.DataFrame]:  # NEW FUNCTION
+    def get_dataframe(self) -> pd.DataFrame | None:  
         """Get loaded DataFrame."""
         return self.df
+        
     
     def run_data_overview(self) -> Dict[str, Any]:
         """
@@ -291,8 +314,12 @@ class DataOverview(LoggerMixin):  # ← CHANGED: Now inherits from LoggerMixin
             results['categorical_columns'] = cat_cols
             
             self.logger.info('✓ Data overview completed successfully')
+
+            # log final results of eda overview
+            mlflow.log_params(results)
             
             return results
+        
         
         except Exception as e:
             self.logger.error(f'Data overview failed: {e}', exc_info=True)
