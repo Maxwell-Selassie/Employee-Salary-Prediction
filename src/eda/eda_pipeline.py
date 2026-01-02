@@ -59,41 +59,49 @@ class EDAPipeline:
         Raises:
             EDAPipelineError: If pipeline execution fails
         """
+        mlflow.set_tracking_uri('http://127.0.0.1:8080')
+        mlflow.set_experiment(experiment_name='Employee_Salary_Prediction-EDA')
         try:
             # ===== STAGE 1: DATA OVERVIEW =====
-            with Timer('Data overview', self.logger):
-                overview = DataOverview(self.config_path)
-                overview_results = overview.run_data_overview()
+            with mlflow.start_run(run_name='Complete EDA Pipeline') as parent_run:
+
+                with mlflow.start_run(run_name='Data_Overview', nested=True):
+                    with Timer('Data overview', self.logger):
+                        overview = DataOverview(self.config_path)
+                        overview_results = overview.run_data_overview()
                 
-                df = overview_results['dataframe']
-                config = overview.get_config()
-                
-                self.results['overview'] = {
-                    'shape': df.shape,
-                    'numeric_columns': overview_results.get('numeric_columns', []),
-                    'categorical_columns': overview_results.get('categorical_columns', [])
-                }
-            
+                        df = overview_results['dataframe']
+                        config = overview.get_config()
+                        
+                        self.results['overview'] = {
+                            'shape': df.shape,
+                            'numeric_columns': overview_results.get('numeric_columns', []),
+                            'categorical_columns': overview_results.get('categorical_columns', [])
+                        }
+                    
             # ===== STAGE 2: DATA QUALITY CHECKS =====
-            with Timer('Data Quality Checks', self.logger):
-                quality_checks = DataQuality(config)
-                quality_results = quality_checks.run_all_checks(df)  # ← CHANGED: Use new method
-                
-                self.results['quality'] = {
-                    'missing_columns': len(quality_results.get('missing_values', [])),
-                    'duplicate_count': quality_results.get('duplicate_count', 0),
-                    'outlier_columns': len(quality_results.get('outliers', {}))
-                }
-            
+                with mlflow.start_run(run_name='Data_Quality', nested=True):
+                    with Timer('Data Quality Checks', self.logger):
+                        quality_checks = DataQuality(config)
+                        quality_results = quality_checks.run_all_checks(df) 
+                        
+                        self.results['quality'] = {
+                            'missing_columns': len(quality_results.get('missing_values', [])),
+                            'duplicate_count': quality_results.get('duplicate_count', 0),
+                            'outlier_columns': len(quality_results.get('outliers', {}))
+                        }
+                    
             # ===== STAGE 3: VISUALIZATIONS =====
-            with Timer('Data visualizations', self.logger):
-                visuals = Visualizations(config)
-                visual_results = visuals.run_visualizations(df)
-                
-                self.results['visualizations'] = visual_results
+                with mlflow.start_run(run_name='Data_visualizations', nested=True):
+                    with Timer('Data visualizations', self.logger):
+                        visuals = Visualizations(config)
+                        visual_results = visuals.run_visualizations(df)
+                        
+                        self.results['visualizations'] = visual_results
             
             # ===== GENERATE SUMMARY REPORT =====
-            self._generate_summary_report(df, config)
+                with mlflow.start_run(run_name='Generate_summary_report', nested=True):
+                    self._generate_summary_report(df, config)
             
             self.logger.info("=" * 80)
             self.logger.info("✓ EDA PIPELINE EXECUTION COMPLETED SUCCESSFULLY")
