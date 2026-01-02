@@ -11,6 +11,7 @@ from typing import Dict, Any
 import sys
 import pandas as pd
 import numpy as np
+import mlflow
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -91,7 +92,7 @@ class EDAPipeline:
                 
                 self.results['visualizations'] = visual_results
             
-            # ===== NEW: GENERATE SUMMARY REPORT =====
+            # ===== GENERATE SUMMARY REPORT =====
             self._generate_summary_report(df, config)
             
             self.logger.info("=" * 80)
@@ -137,6 +138,8 @@ class EDAPipeline:
             write_json(report, report_path, indent=2)
             
             self.logger.info(f'✓ Summary report saved to {report_path}')
+
+            mlflow.log_artifact(report_path)
         
         except Exception as e:
             self.logger.warning(f'Could not generate summary report: {e}')
