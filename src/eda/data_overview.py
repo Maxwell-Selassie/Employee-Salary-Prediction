@@ -37,7 +37,7 @@ class DataOverview(LoggerMixin):
         """
         self.config = self._load_config(config_path)
         self.logger = self.setup_class_logger('data_overview', self.config, 'logging')
-        self.df = None  
+ 
     
     def _load_config(self, config_path: str | Path) -> Dict:
         """
@@ -117,8 +117,7 @@ class DataOverview(LoggerMixin):
             mlflow.log_param('Dataset_name', 'Employee_Complete_Dataset.csv(1)')
             mlflow.log_param('n_rows', len(df))
             mlflow.log_param('n_columns', len(df.columns))
-
-            self.df = df  
+ 
             return df
         
         except FileNotFoundError as e:
@@ -278,10 +277,6 @@ class DataOverview(LoggerMixin):
     def get_config(self) -> Dict:
         """Get configuration dictionary."""
         return self.config
-    
-    def get_dataframe(self) -> pd.DataFrame | None:  
-        """Get loaded DataFrame."""
-        return self.df
         
     
     def run_data_overview(self) -> Dict[str, Any]:
