@@ -6,8 +6,9 @@ FIXED: Logic errors, better reporting, improved outlier detection
 import pandas as pd
 import numpy as np
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Dict, Any
 import warnings
+import mlflow
 warnings.filterwarnings('ignore')
 
 from utils import setup_logger, ensure_directory, write_csv
@@ -51,11 +52,12 @@ class DataQuality(LoggerMixin):
         
         missing = df.isnull().sum()
         missing = missing[missing > 0].sort_values(ascending=False)
-        
-        # FIXED: Correct logic
+
+        mlflow.log_param('no_of_missing', missing.sum())
+        # Correct logic
         if len(missing) == 0:
             self.logger.info('✓ No missing values found!')
-            return pd.DataFrame()  # Return empty df
+            return {'has_missing': False, 'missing': pd.DataFrame()}
         
         # Calculate percentages
         missing_pct = (missing / len(df)).round(4)
@@ -79,6 +81,8 @@ class DataQuality(LoggerMixin):
         )
         ensure_directory(Path(artifacts_path).parent)
         write_csv(missing_df, artifacts_path, index=True) 
+
+        mlflow.log_artifact(artifacts_path)
         
         # Log findings
         critical_cols = missing_df[missing_df['severity'] == 'CRITICAL']
@@ -116,23 +120,27 @@ class DataQuality(LoggerMixin):
         self.logger.info('Checking for duplicates...')
         
         n_duplicates = df.duplicated().sum()
+        mlflow.log_param('n_duplicates', n_duplicates)
         
-        # FIXED: Correct logic
+        # Correct logic
         if n_duplicates == 0:
             self.logger.info('✓ No duplicates found')
             return 0
         
         duplicates_pct = (n_duplicates / len(df)) * 100
+        mlflow.log_param('duplicate_pct', duplicates_pct)
         self.logger.warning(
             f'⚠️  Found {n_duplicates} duplicate rows ({duplicates_pct:.2f}%)'
         )
         
-        # NEW: Save duplicate rows for inspection
+        # Save duplicate rows for inspection
         if self.config['data_quality'].get('save_duplicates', False):
             dup_rows = df[df.duplicated(keep=False)].sort_values(by=df.columns.tolist())
             dup_path = Path(self.config['data'].get('artifact_data_path_duplicates', 'artifacts/duplicate_rows.csv'))
             ensure_directory(dup_path.parent)
             write_csv(dup_rows, dup_path, index=False)
+
+            mlflow.log_artifact(dup_path)
             self.logger.info(f'Saved duplicate rows to {dup_path}')
         
         return n_duplicates
@@ -156,7 +164,7 @@ class DataQuality(LoggerMixin):
         # Columns to exclude from outlier detection
         cols_not_for_outliers = self.config['data_quality'].get(
             'outlier_exclude_columns',
-            ['id', 'stroke', 'hypertension', 'heart_disease']
+            ['performance_rating','is_outlier']
         )
         
         numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
@@ -205,6 +213,8 @@ class DataQuality(LoggerMixin):
             ensure_directory(Path(outlier_path).parent)
             write_csv(summary_df, outlier_path, index=True)  
             self.logger.info(f'✓ Saved outlier summary to {outlier_path}')
+
+            mlflow.log_artifact(outlier_path)
         
         # Log high outlier columns
         high_outlier_cols = [
@@ -243,6 +253,8 @@ class DataQuality(LoggerMixin):
             self.logger.info('='*60)
             self.logger.info('✓ DATA QUALITY CHECKS COMPLETED')
             self.logger.info('='*60)
+
+            mlflow.log_params(results)
             
             return results
         

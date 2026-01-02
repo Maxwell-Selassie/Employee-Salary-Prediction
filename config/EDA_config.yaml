@@ -39,6 +39,8 @@ data:
   - 'Work_Life_Balance'
   - 'is_outlier'
 
+
+
   save_expected_columns: true
   feature_store_path: 'artifacts/feature_store/expected_features.json'
 
@@ -116,6 +118,10 @@ visualization:
 data_quality:
   missing_threshold_critical: 0.30
   missing_threshold_warning: 0.05
+
+  outlier_exclude_columns:
+  - 'performance_rating'
+  - 'is_outlier'
 
   # duplicate handling
   check_duplicates: true

@@ -9,9 +9,9 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 from pathlib import Path
 from typing import Optional, Dict
-import logging
+import mlflow
 
-from utils import setup_logger, ensure_directory
+from utils import ensure_directory
 from utils.logging_mixin import LoggerMixin  
 
 
@@ -94,7 +94,7 @@ class Visualizations(LoggerMixin):
             except Exception as e:
                 self.logger.error(f'Error plotting {col}: {e}')
                 axes[idx].text(0.5, 0.5, f'Error: {str(e)[:50]}', 
-                             ha='center', va='center', transform=axes[idx].transAxes)
+                            ha='center', va='center', transform=axes[idx].transAxes)
         
         # Hide empty subplots
         for idx in range(n_cols, len(axes)):
@@ -106,6 +106,7 @@ class Visualizations(LoggerMixin):
             output_file = self.output_dir / 'numeric_distributions.png'
             dpi = self.config['output'].get('plot_dpi', 300)
             plt.savefig(output_file, dpi=dpi, bbox_inches='tight')
+            mlflow.log_artifact(output_file)
             plt.close(fig)
             self.logger.info(f'✓ Saved: {output_file}')
         else:
@@ -157,6 +158,7 @@ class Visualizations(LoggerMixin):
             output_file = self.output_dir / 'categorical_distributions.png'
             dpi = self.config['output'].get('plot_dpi', 300)
             plt.savefig(output_file, dpi=dpi, bbox_inches='tight')
+            mlflow.log_artifact(output_file)
             plt.close(fig)
             self.logger.info(f'✓ Saved: {output_file}')
         else:
@@ -207,6 +209,7 @@ class Visualizations(LoggerMixin):
             output_file = self.output_dir / 'boxplots_outliers.png'
             dpi = self.config['output'].get('plot_dpi', 300)
             plt.savefig(output_file, dpi=dpi, bbox_inches='tight')
+            mlflow.log_artifact(output_file)
             plt.close(fig)
             self.logger.info(f'✓ Saved: {output_file}')
         else:
@@ -244,6 +247,7 @@ class Visualizations(LoggerMixin):
                 output_file = self.output_dir / f'correlation_heatmap_{method}.png'
                 dpi = self.config['output'].get('plot_dpi', 300)
                 plt.savefig(output_file, dpi=dpi, bbox_inches='tight')
+                mlflow.log_artifact(output_file)
                 plt.close(fig)
                 self.logger.info(f'✓ Saved: {output_file}')  
             else:
@@ -272,6 +276,7 @@ class Visualizations(LoggerMixin):
         try:
             self.plot_numeric_distributions(df)
             results['numeric_distributions'] = 'success'
+            
         except Exception as e:
             self.logger.error(f'Numeric distributions failed: {e}')
             results['numeric_distributions'] = f'failed: {e}'
@@ -302,4 +307,5 @@ class Visualizations(LoggerMixin):
         self.logger.info('✓ VISUALIZATIONS COMPLETED')
         self.logger.info('='*60)
         
+        mlflow.log_params(results)
         return results
