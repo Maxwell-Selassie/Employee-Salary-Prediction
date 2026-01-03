@@ -270,7 +270,7 @@ class DataOverview(LoggerMixin):
         self.logger.info(f'Saved categorical summary to {summary_path}')
 
         # log categorical summary to MLflow
-        mlflow.log_artifact(cat_summary)
+        mlflow.log_artifact(summary_path)
         
         return cat_summary, cat_cols
     

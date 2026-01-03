@@ -40,9 +40,9 @@
       ]
     },
     "quality": {
-      "missing_columns": 0,
+      "missing_columns": 2,
       "duplicate_count": 0,
-      "outlier_columns": 11
+      "outlier_columns": 9
     },
     "visualizations": {
       "numeric_distributions": "success",
