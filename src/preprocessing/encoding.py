@@ -77,8 +77,10 @@ class FeatureEncoder(LoggerMixin):
             
             # Get categorical columns
             categorical_cols = df.select_dtypes(exclude=[np.number]).columns.tolist()
+            ignore_employee_names_column = self.config.get('ignore_columns', 'Employee_name')
+            columns_to_encode = [col for col in categorical_cols if col not in ignore_employee_names_column]
             
-            if not categorical_cols:
+            if not columns_to_encode:
                 self.logger.info('No categorical columns found')
                 return df
             
@@ -86,7 +88,7 @@ class FeatureEncoder(LoggerMixin):
                 # Learn categories from training data
                 self.logger.info(f'Learning categories from {len(categorical_cols)} columns')
                 
-                for col in categorical_cols:
+                for col in columns_to_encode:
                     self.seen_categories[col] = set(df[col].dropna().unique())
                     
                     # One-hot encode
@@ -104,7 +106,7 @@ class FeatureEncoder(LoggerMixin):
             
             else:
                 # Apply learned categories to dev/test
-                for col in categorical_cols:
+                for col in columns_to_encode:
                     if col not in self.seen_categories:
                         self.logger.warning(
                             f'Column {col} was not seen during training, skipping'

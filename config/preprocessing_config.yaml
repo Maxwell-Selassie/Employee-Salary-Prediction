@@ -69,7 +69,7 @@ duplicates:
 
 encoding:
   one_hot_columns: true
-
+  ignore_columns: 'Employee_name' 
 
 transformations:
   log_columns: ['Employee_age', "past_projects", 'years_experience', 'Job_Satisfaction', "Work_Life_Balance", "Current_Salary"]

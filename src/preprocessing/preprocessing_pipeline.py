@@ -31,8 +31,8 @@ class PreprocessingPipeline:
     """
     Orchestrate all preprocessing steps with zero data leakage.
     
-    ✅ FIXED: Encoding now happens AFTER split
-    ✅ UPDATED: Data validation at multiple stages
+    Encoding now happens AFTER split
+    UPDATED: Data validation at multiple stages
     NEW: Config validation before execution
     """
     
@@ -74,7 +74,7 @@ class PreprocessingPipeline:
             config = read_yaml(config_path)
             self.logger.info(f'Configuration loaded from {config_path}')
             
-            # ✨ NEW: Validate config structure
+            # Validate config structure
             validator = ConfigValidator()
             validator.validate_preprocessing_config(config)
             
@@ -96,7 +96,7 @@ class PreprocessingPipeline:
             ValueError: If data is invalid
         """
         try:
-            file_path = Path(self.config.get('file_path', 'data/raw/healthcare-dataset-stroke-data.csv'))
+            file_path = Path(self.config['data'].get('file_path', 'data/raw/Employee_Complete_Dataset.csv'))
             
             if not file_path.exists():
                 raise FileNotFoundError(f'File not found: {file_path}')
@@ -106,14 +106,14 @@ class PreprocessingPipeline:
             
             self.logger.info(f'DataFrame loaded: {df.shape}')
             
-            # ✨ NEW: Validate loaded data
+            #  Validate loaded data
             if 'expected_columns' in self.config:
                 self.data_validator.validate_schema(df, self.config['expected_columns'])
             
-            # ✨ NEW: Validate data integrity
+            #  Validate data integrity
             self.data_validator.validate_integrity(df)
             
-            # ✨ NEW: Validate ranges if specified
+            #  Validate ranges if specified
             if 'value_ranges' in self.config:
                 self.data_validator.validate_ranges(df, self.config['value_ranges'])
             
@@ -148,7 +148,7 @@ class PreprocessingPipeline:
     
     def fit_transform(self) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         """
-        ✅ FIXED: Complete preprocessing pipeline with proper ordering.
+        Complete preprocessing pipeline with proper ordering.
         
         Key changes:
         - Encoding happens AFTER split (not before)
@@ -194,7 +194,7 @@ class PreprocessingPipeline:
             self.logger.info('\n[Stage 2] Splitting Data...')
             train_set, dev_set, test_set = self.splitter.split_data(df)
             
-            # ✨ NEW: Validate splits
+            #  Validate splits
             self.logger.info('Validating data splits...')
             if train_set.shape[1] != dev_set.shape[1] or train_set.shape[1] != test_set.shape[1]:
                 raise ValueError('Feature count mismatch across splits')
@@ -205,7 +205,7 @@ class PreprocessingPipeline:
             self.logger.info('\n[Stage 3] Fitting Transformers on Training Data...')
             
             train_set = self.outlier_handler.handle_outliers(train_set, fit=True)
-            # ✅ FIXED: Encoding now happens AFTER split
+            # Encoding now happens AFTER split
             train_set = self.feature_encoder.encode_features(train_set, fit=True)
             train_set = self.feature_transformer.transform_features(train_set, fit=True)
             train_set = self._drop_columns(train_set)
@@ -235,7 +235,7 @@ class PreprocessingPipeline:
             # ================================================================
             self.logger.info('\n[Stage 6] Final Validation...')
             
-            # ✨ NEW: Validate processed data
+            #  Validate processed data
             self.data_validator.validate_processed_data(train_set, dev_set, test_set)
             
             # ================================================================
@@ -244,7 +244,7 @@ class PreprocessingPipeline:
             self.logger.info('\n[Stage 7] Saving Outputs...')
             self._save_datasets(train_set, dev_set, test_set)
             self._save_pipeline()
-            # ✨ NEW: Save processing metadata
+            #  Save processing metadata
             self._save_metadata(train_set, dev_set, test_set)
             
             self.logger.info('\n' + '=' * 80)
@@ -283,7 +283,7 @@ class PreprocessingPipeline:
     
     def _save_pipeline(self) -> None:
         """
-        ✨ UPDATED: Save pipeline with version info.
+        Save pipeline with version info.
         """
         try:
             pipeline_path = Path(self.config['output']['pipeline_file'])
@@ -314,7 +314,7 @@ class PreprocessingPipeline:
     def _save_metadata(self, train: pd.DataFrame, dev: pd.DataFrame, 
                     test: pd.DataFrame) -> None:
         """
-        ✨ NEW: Save preprocessing metadata for reproducibility.
+         Save preprocessing metadata for reproducibility.
         
         Args:
             train: Training set

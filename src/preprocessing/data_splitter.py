@@ -84,7 +84,7 @@ class DataSplitter(LoggerMixin):
             self.logger.info(f'Test set:  {len(test_set)} rows ({len(test_set)/total_size*100:.1f}%)')
             
             # Validate split
-            self._validate_split(train_set, dev_set, test_set, total_size, stratify_col)
+            self._validate_split(train_set, dev_set, test_set, total_size)
             
             return (
                 train_set.reset_index(drop=True), 
