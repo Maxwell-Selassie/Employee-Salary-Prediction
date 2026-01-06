@@ -59,7 +59,7 @@ class EDAPipeline:
         Raises:
             EDAPipelineError: If pipeline execution fails
         """
-
+        mlflow.set_tracking_uri('sqlite:///employee_salary_preds.db')
         mlflow.set_experiment(experiment_name='Employee_Salary_Prediction-EDA')
         try:
             # ===== STAGE 1: DATA OVERVIEW =====
