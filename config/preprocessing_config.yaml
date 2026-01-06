@@ -1,0 +1,83 @@
+
+data:
+  file_path: 'data/raw/Employee_Complete_Dataset.csv'
+
+expected_columns:
+  - "Employee_number"
+  - "Employee_name"
+  - "Employee_age"
+  - "Maritial_Status"
+  - "Current_Salary"
+  - "Number_of_Children"
+  - "years_experience"
+  - "past_projects"
+  - "current_projects"
+  - "Divorced_earlier"
+  - "Father_alive"
+  - "Mother_alive"
+  - "performance_rating"
+  - "Education_level"
+  - "Department"
+  - "Role"
+  - "Job_Satisfaction"
+  - "Work_Life_Balance"
+  - "is_outlier"
+
+value_ranges:
+  Employee_age: [0, 120]
+  Current_Salary: [0, 1000000]
+  years_experience: [0, 100]
+  past_project: [0, 10]
+  Number_of_Children: [0, 30]
+  current_project: [0, 30]
+  Job_Satisfaction: [1.0, 10.0]
+  Work_Life_Balance: [1.0, 10.0]
+  is_outlier: [0, 1]
+  performance_rating: [1, 5]
+  
+data_split:
+  dev_size: 7500
+  test_size: 7500
+  random_state: 42
+
+
+missing_values:
+  enabled:  true
+  numeric:
+    strategy: 'mean'
+  categorical:
+    strategy: 'mode'
+
+# logging configuration
+logging:
+  log_dir: 'logs/'
+  log_level: 'INFO'
+  max_bytes: 10485760
+  backup_count: 7
+  format: '%(asctime)s -%(name) %(levelname)s -%(funcName)s:%(lineno)d - %(message)s'
+  date_format: '%Y-%m-%d %H:%M:%S'
+
+outliers:
+  enabled: false
+  cols_to_flag: []
+  drop_original: false
+
+duplicates:
+  check_duplicates: true
+  subset_cols: null 
+
+
+encoding:
+  one_hot_columns: true
+
+
+transformations:
+  log_columns: ['Employee_age', "past_projects", 'years_experience', 'Job_Satisfaction', "Work_Life_Balance", "Current_Salary"]
+  drop_original: false
+
+output:
+  processed_dir: 'data/processed'
+  pipeline_file: 'artifacts/data/preprocessing_pipeline.joblib'
+
+columns_to_drop: ['Employee_number', 'Employee_name']
+
