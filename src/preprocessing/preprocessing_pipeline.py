@@ -271,9 +271,9 @@ class PreprocessingPipeline:
             processed_dir = Path(self.config['output']['processed_dir'])
             ensure_directory(processed_dir)
             
-            write_csv(train, processed_dir / 'train_set.csv')
-            write_csv(dev, processed_dir / 'dev_set.csv')
-            write_csv(test, processed_dir / 'test_set.csv')
+            write_csv(train, processed_dir / 'train_set.csv',index=False)
+            write_csv(dev, processed_dir / 'dev_set.csv',index=False)
+            write_csv(test, processed_dir / 'test_set.csv', index=False)
             
             self.logger.info(f'✓ All datasets saved to {processed_dir}')
         
