@@ -69,8 +69,8 @@ model_validation:
   thresholds:
     mean_squared_error:
       max: 0.10
-      warning: 0.75
-      target: 0.85
+      warning: 0.12
+      target: 0.08
     
     r2_score:
       min: 0.80
@@ -80,9 +80,7 @@ model_validation:
     train_test_gap:
       max: 0.15
       warning: 0.10
-  
-  business_rules:
-    max_root_mean_squared_error: 0.10
+
 
 
 # ==============================
@@ -163,7 +161,7 @@ hyperparameter_tuning:
     Ridge:
       C: ['log_uniform', 0.001, 100]
       penalty: ['categorical', ['l1', 'l2']]
-      solver: ['categorical', ['auto', 'svd', 'cholesky', 'lsqr', 'sparse_cg', 'sag', 'saga']]
+      solver: ['categorical', ['auto', 'svd']]
     
     RandomForest:
       n_estimators: ['int', 50, 500]

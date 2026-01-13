@@ -68,7 +68,6 @@ class TrainingDataLoader(LoggerMixin):
         
         self.logger.info(f"  Train: X={self.X_train.shape}, y={self.y_train.shape}")
         self.logger.info(f"  Features: {self.n_features}")
-        self.logger.info(f"  Class distribution: {np.bincount(self.y_train.astype(int))}")
         
         # Load validation set
         val_path = self.config.get('val_data')
@@ -79,16 +78,24 @@ class TrainingDataLoader(LoggerMixin):
         self.y_val = df_val[target_col].values
         
         self.logger.info(f"  Test: X={self.X_val.shape}, y={self.y_val.shape}")
-        self.logger.info(f"  Class distribution: {np.bincount(self.y_val.astype(int))}")
+
+        # Load test set
+        test_path = self.config.get('test_data')
+        self.logger.info(f"Loading test data from: {test_path}")
+        df_test = read_csv(test_path)
+        self.X_test = df_test.drop(columns=[target_col]).values
+        self.y_test = df_test[target_col].values
+
+        self.logger.info(f"  Test: X={self.X_test.shape}, y={self.y_test.shape}")
 
         
         # Validate shapes
-        if self.X_train.shape[1] != self.X_val.shape[1]:
+        if self.X_train.shape[1] != self.X_val.shape[1] or self.X_train.shape[1] != self.X_test.shape[1]:
             raise ValueError("Feature count mismatch between train/test sets")
         
         self.logger.info("✓ Data loaded successfully")
         
-        return self.X_train, self.y_train, self.X_val, self.y_val
+        return self.X_train, self.y_train, self.X_val, self.y_val,self.X_test, self.y_test  
     
     def get_metadata(self) -> Dict[str, Any]:
         """
@@ -102,7 +109,6 @@ class TrainingDataLoader(LoggerMixin):
             'feature_names': self.feature_names,
             'train_size': len(self.X_train),
             'val_size': len(self.X_val),
-            'train_class_dist': np.bincount(self.y_train.astype(int)).tolist(),
-            'val_class_dist': np.bincount(self.y_val.astype(int)).tolist()
+            'tests_size': len(self.X_test)
         }
     
