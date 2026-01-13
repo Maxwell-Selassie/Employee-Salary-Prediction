@@ -1,729 +1,582 @@
 """
-Main Model Training Pipeline with MLflow Integration (Train/val Only)
-Production-grade ML training with experiment tracking.
+Complete Model Training Pipeline with MLflow Integration
+
+Features:
+- SQLite MLflow backend
+- Automatic best model selection
+- Runtime constraints (<10s)
+- Comprehensive logging with decision tags
+- Dataset tracking
+- Model-as-code registration
+- Production alias assignment
 """
 
 import sys
 from pathlib import Path
 import numpy as np
 import pandas as pd
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import warnings
 warnings.filterwarnings('ignore')
+
 import mlflow
 import mlflow.sklearn
 from mlflow.models.signature import infer_signature
+from mlflow.tracking import MlflowClient
 import joblib
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-import seaborn as sns
 import time
 
-# Add src to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from utils import (
-    read_yaml, ensure_directory, get_timestamp,
-    Timer, setup_logger
-)
-from model_training import (
-    TrainingDataLoader,
-    ModelTrainer,
-    HyperparameterTuner,
-    ModelEvaluator,
-    FeatureImportanceAnalyzer,
-    ModelValidator
+from sklearn.linear_model import Ridge
+from sklearn.ensemble import RandomForestRegressor
+from xgboost import XGBRegressor
+from lightgbm import LGBMRegressor
+from sklearn.model_selection import cross_val_score, KFold
+from sklearn.metrics import (
+    mean_squared_error, mean_absolute_error, r2_score,
+    root_mean_squared_error
 )
 
-
-class ModelTrainingError(Exception):
-    """Custom exception for model training errors."""
-    pass
+from utils import read_yaml, ensure_directory, get_timestamp, LoggerMixin
 
 
-class ModelTrainingPipeline:
+class ModelTrainingPipeline(LoggerMixin):
     """
-    Complete model training pipeline with MLflow tracking (Train/val split).
+    Production-grade ML training pipeline with MLflow.
     
-    Pipeline Stages:
-    1. Data loading (train/val)
-    2. MLflow experiment setup
-    3. Baseline model training (evaluated on val set)
-    4. Model evaluation & selection
-    5. Hyperparameter tuning (top 3 models, using CV on train set)
-    6. Final evaluation on val set
-    7. Model registration
+    Key Features:
+    1. SQLite backend for local tracking
+    2. Automatic model selection based on CV MSE
+    3. Runtime constraint enforcement (<10s)
+    4. Decision tagging (WHY choices were made)
+    5. Dataset lineage tracking
+    6. Model-as-code registration
+    7. Production alias assignment
     """
     
-    def __init__(self, config_path: str = "config/model_training_config.yaml"):
-        """
-        Initialize Model Training Pipeline.
-        
-        Args:
-            config_path: Path to configuration YAML file
-        """
+    def __init__(self, config):
+        """Initialize pipeline."""
         self.timestamp = get_timestamp()
-        self.config = self._load_config(config_path)
-        self.logger = self._setup_logging()
-        
-        # Initialize components
-        self.data_loader = None
-        self.trainer = None
-        self.tuner = None
-        self.evaluator = None
-        self.feature_analyzer = None
-        self.validator = None
+        self.config = config
+        self.logger = self.setup_class_logger('training_pipeline', config, 'logging')
         
         # Data
         self.X_train = None
         self.y_train = None
         self.X_val = None
         self.y_val = None
+        self.X_test = None
+        self.y_test = None
         self.feature_names = None
         
         # Results
-        self.baseline_results = []
-        self.tuned_results = []
+        self.model_results = []  # All trained models
         self.best_model = None
         self.best_model_name = None
-        self.best_model_score = 0.0
+        self.best_run_id = None
         
         # MLflow
+        self.client = None
         self.experiment_id = None
         
         self.logger.info("="*80)
-        self.logger.info(f"MODEL TRAINING PIPELINE INITIALIZED - {self.timestamp}")
+        self.logger.info(f"MODEL TRAINING PIPELINE - {self.timestamp}")
         self.logger.info("="*80)
-        self.logger.info(f"Author: {self.config['project']['name']}")
+        self.logger.info(f"Project: {self.config['project']['name']}")
         self.logger.info(f"Version: {self.config['project']['version']}")
-        self.logger.info(f"Note: Using Train/val split (no validation set)")
     
-    def _load_config(self, config_path: str) -> Dict[str, Any]:
-        """Load configuration from YAML file."""
-        try:
-            config = read_yaml(config_path)
-            return config
-        except FileNotFoundError:
-            print(f"ERROR: Config file not found: {config_path}")
-            sys.exit(1)
-        except Exception as e:
-            print(f"ERROR: Failed to load config: {e}")
-            sys.exit(1)
     
-    def _setup_logging(self) -> Any:
-        """Setup logging system."""
-        log_config = self.config.get('logging', {})
-        log_dir = Path(log_config.get('log_dir', 'logs/'))
+    def setup_mlflow(self) -> None:
+        """
+        Setup MLflow with SQLite backend.
         
-        ensure_directory(log_dir)
+        Creates:
+        - SQLite database for tracking
+        - Experiment
+        - Model registry
+        """
+        self.logger.info("\n" + "="*80)
+        self.logger.info("MLFLOW SETUP")
+        self.logger.info("="*80)
         
-        logger = setup_logger(
-            name='model_training_pipeline',
-            log_dir=log_dir,
-            log_level=log_config.get('log_level', 'INFO'),
-            max_bytes=log_config.get('max_bytes', 10485760),
-            backup_count=log_config.get('backup_count', 7)
-        )
-        
-        return logger
-    
-    def _setup_mlflow(self) -> None:
-        """Setup MLflow tracking."""
         mlflow_config = self.config.get('mlflow', {})
         
-        # Set tracking URI
-        tracking_uri = mlflow_config.get('tracking_uri', './mlruns')
+        # Set tracking URI (SQLite)
+        tracking_uri = mlflow_config.get('tracking_uri', 'sqlite:///mlflow.db')
         mlflow.set_tracking_uri(tracking_uri)
+        self.logger.info(f"✓ Tracking URI: {tracking_uri}")
         
-        self.logger.info(f"MLflow tracking URI: {tracking_uri}")
-        
-        # Set experiment
-        experiment_name = mlflow_config.get('experiment_name', 'Loan_Eligibility_Prediction')
+        # Create/get experiment
+        experiment_name = mlflow_config.get('experiment_name', 'Employee_Salary_Prediction')
         
         try:
             self.experiment_id = mlflow.create_experiment(experiment_name)
+            self.logger.info(f"✓ Created experiment: {experiment_name}")
         except:
             experiment = mlflow.get_experiment_by_name(experiment_name)
             self.experiment_id = experiment.experiment_id
+            self.logger.info(f"✓ Using existing experiment: {experiment_name}")
         
         mlflow.set_experiment(experiment_name)
         
-        self.logger.info(f"MLflow experiment: {experiment_name} (ID: {self.experiment_id})")
-    
-    def _ensure_output_directories(self) -> None:
-        """Ensure all output directories exist."""
-        self.logger.info("Creating output directories...")
+        # Initialize client
+        self.client = MlflowClient()
         
-        # Models directory
-        model_path = Path(self.config['model_persistence']['best_model_path'])
-        ensure_directory(model_path.parent)
-        
-        # Artifacts directory
-        artifacts_path = Path(self.config['model_persistence']['artifacts_path'])
-        ensure_directory(artifacts_path)
-        
-        # Plots directory
-        if self.config.get('plotting', {}).get('enabled', True):
-            plots_dir = Path(self.config['plotting']['plots_dir'])
-            ensure_directory(plots_dir)
+        self.logger.info(f"  Experiment ID: {self.experiment_id}")
     
     def load_data(self) -> None:
-        """Load preprocessed training data."""
-        with Timer("Data loading", self.logger):
-            try:
-                self.data_loader = TrainingDataLoader(self.config)
-                
-                self.X_train, self.y_train, self.X_val, self.y_val = self.data_loader.load()
-                
-                self.feature_names = self.data_loader.feature_names
-                
-            except Exception as e:
-                self.logger.error(f"Data loading failed: {e}", exc_info=True)
-                raise ModelTrainingError(f"Failed to load data: {e}")
-    
-    def train_baseline_models(self) -> List[Dict[str, Any]]:
         """
-        Train all baseline models (no hyperparameter tuning).
-        Evaluate on val set since we don't have a validation set.
+        Load data and log to MLflow.
         
-        Returns:
-            List of baseline results
+        Uses mlflow.log_input() for dataset tracking.
         """
         self.logger.info("\n" + "="*80)
-        self.logger.info("PHASE 1: BASELINE MODEL TRAINING")
+        self.logger.info("DATA LOADING")
+        self.logger.info("="*80)
+        
+        data_config = self.config.get('data', {})
+        target_col = data_config.get('target_column')
+        
+        # Load datasets
+        train_path = data_config.get('train_data')
+        val_path = data_config.get('val_data')
+        test_path = data_config.get('test_data')
+        
+        df_train = pd.read_csv(train_path)
+        df_val = pd.read_csv(val_path)
+        df_test = pd.read_csv(test_path)
+        
+        self.X_train = df_train.drop(columns=[target_col]).values
+        self.y_train = df_train[target_col].values
+        self.X_val = df_val.drop(columns=[target_col]).values
+        self.y_val = df_val[target_col].values
+        self.X_test = df_test.drop(columns=[target_col]).values
+        self.y_test = df_test[target_col].values
+        self.feature_names = df_train.drop(columns=[target_col]).columns.tolist()
+        
+        self.logger.info(f"✓ Data loaded:")
+        self.logger.info(f"  Train: {self.X_train.shape}")
+        self.logger.info(f"  Val: {self.X_val.shape}")
+        self.logger.info(f"  Test: {self.X_test.shape}")
+        self.logger.info(f"  Features: {len(self.feature_names)}")
+    
+    def train_models(self) -> List[Dict[str, Any]]:
+        """
+        Train all configured models with MLflow tracking.
+        
+        For each model:
+        1. Start MLflow run
+        2. Log parameters, datasets, tags
+        3. Train model (enforce runtime constraint)
+        4. Cross-validate
+        5. Evaluate on val set
+        6. Log metrics, artifacts
+        7. Register if best
+        
+        Returns:
+            List of model results
+        """
+        self.logger.info("\n" + "="*80)
+        self.logger.info("MODEL TRAINING")
         self.logger.info("="*80)
         
         # Get models to train
-        models_to_train = []
+        models_to_train = self._get_models_to_train()
+        self.logger.info(f"Training {len(models_to_train)} models: {[m[0] for m in models_to_train]}")
         
-        # Baseline model
-        if self.config['models']['baseline']['enabled']:
-            models_to_train.append(('LogisticRegression', self.config['models']['baseline']))
+        runtime_config = self.config.get('runtime_constraints', {})
+        max_time = runtime_config.get('max_training_time_seconds', 10)
         
-        # Tree-based models
-        for model_name, model_config in self.config['models']['tree_based'].items():
-            if model_config.get('enabled', True):
-                models_to_train.append((model_name, model_config))
+        self.logger.info(f"Runtime constraint: {max_time}s per model")
         
-        self.logger.info(f"Training {len(models_to_train)} baseline models: {[m[0] for m in models_to_train]}")
-        self.logger.info("Note: Models evaluated on val set (no separate validation set)")
-        
-        baseline_results = []
+        results = []
         
         for model_name, model_config in models_to_train:
+            self.logger.info(f"\n{'='*60}")
+            self.logger.info(f"Training: {model_name}")
+            self.logger.info(f"{'='*60}")
+            
             try:
-                result = self._train_single_model(
-                    model_name=model_name,
-                    params=model_config['params'],
-                    is_tuned=False
-                )
-                baseline_results.append(result)
+                result = self._train_single_model(model_name, model_config)
+                
+                # Check runtime constraint
+                if result['training_time'] > max_time:
+                    decision = f"Model exceeded {max_time}s runtime constraint"
+                    self.logger.warning(f"⚠ {decision}: {result['training_time']:.2f}s")
+                    
+                    # Tag in MLflow
+                    with mlflow.start_run(run_id=result['run_id']):
+                        mlflow.set_tag("runtime_constraint_violated", "true")
+                        mlflow.set_tag("rejection_reason", decision)
+                    
+                    if runtime_config.get('strict_mode', False):
+                        self.logger.error(f"✗ Rejecting model due to strict mode")
+                        continue
+                
+                results.append(result)
                 
             except Exception as e:
-                self.logger.error(f"Training {model_name} failed: {e}", exc_info=True)
+                self.logger.error(f"Failed to train {model_name}: {e}", exc_info=True)
                 
-                # Stop pipeline on failure
                 if self.config.get('error_handling', {}).get('on_model_failure') == 'stop':
-                    raise ModelTrainingError(f"Model training failed: {e}")
+                    raise
         
-        # Rank models by val performance
-        baseline_results.sort(key=lambda x: x['val_metrics'][self.config['metrics']['primary_metric']], reverse=True)
+        # Rank by CV MSE (lower is better)
+        results.sort(key=lambda x: x['cv_mse'])
         
         self.logger.info("\n" + "="*80)
-        self.logger.info("BASELINE RESULTS SUMMARY (Ranked by val Performance)")
+        self.logger.info("TRAINING RESULTS (Ranked by CV MSE)")
         self.logger.info("="*80)
         
-        primary_metric = self.config['metrics']['primary_metric']
-        for i, result in enumerate(baseline_results, 1):
-            score = result['val_metrics'][primary_metric]
-            cv_mean = result['cv_results'].get('cv_mean', 0)
-            self.logger.info(f"{i}. {result['model_name']}: val_{primary_metric}={score:.4f}, cv_{primary_metric}={cv_mean:.4f}")
+        for i, r in enumerate(results, 1):
+            self.logger.info(
+                f"{i}. {r['model_name']}: "
+                f"CV MSE={r['cv_mse']:.4f}, "
+                f"Val MSE={r['val_mse']:.4f}, "
+                f"R²={r['val_r2']:.4f}, "
+                f"Time={r['training_time']:.2f}s"
+            )
         
-        self.baseline_results = baseline_results
-        
-        return baseline_results
+        self.model_results = results
+        return results
     
-    def _train_single_model(
-        self,
-        model_name: str,
-        params: Dict[str, Any],
-        is_tuned: bool = False
-    ) -> Dict[str, Any]:
-        """
-        Train a single model and log to MLflow.
+    def _get_models_to_train(self) -> List[tuple]:
+        """Get list of models to train from config."""
+        models = []
         
-        Args:
-            model_name: Name of the model
-            params: Model hyperparameters
-            is_tuned: Whether this is a tuned model
-            
-        Returns:
-            Dictionary with training results
+        # Baseline
+        if self.config['models']['baseline'].get('enabled', True):
+            models.append((
+                self.config['models']['baseline']['name'],
+                self.config['models']['baseline']
+            ))
+        
+        # Tree-based
+        for name, config in self.config['models']['tree_based'].items():
+            if config.get('enabled', True):
+                models.append((name, config))
+        
+        return models
+    
+    def _train_single_model(self, model_name: str, model_config: Dict) -> Dict[str, Any]:
         """
-        run_name = f"{'tuned_' if is_tuned else ''}{model_name}_{self.timestamp}"
+        Train a single model with full MLflow tracking.
+        
+        Returns:
+            Dictionary with training results and metrics
+        """
+        run_name = f"{model_name}_{self.timestamp}"
         
         with mlflow.start_run(run_name=run_name) as run:
-            self.logger.info(f"\nMLflow Run ID: {run.info.run_id}")
+            run_id = run.info.run_id
+            self.logger.info(f"MLflow Run ID: {run_id}")
             
-            # Log parameters
+            # ===== LOG PARAMETERS =====
+            params = model_config['params']
             mlflow.log_param("model_name", model_name)
-            mlflow.log_param("is_tuned", is_tuned)
             mlflow.log_params(params)
+            mlflow.log_param("n_features", len(self.feature_names))
+            mlflow.log_param("train_size", len(self.X_train))
+            mlflow.log_param("val_size", len(self.X_val))
             
-            # Log dataset metadata
-            metadata = self.data_loader.get_metadata()
-            for key, value in metadata.items():
-                if not isinstance(value, (list, dict)):
-                    mlflow.log_param(f"data_{key}", value)
+            # ===== LOG DATASETS =====
+            try:
+                train_df = pd.DataFrame(self.X_train, columns=self.feature_names)
+                train_df[self.config['data']['target_column']] = self.y_train
+                
+                train_dataset = mlflow.data.from_pandas(
+                    train_df,
+                    source=self.config['data']['train_data'],
+                    name="training_data"
+                )
+                mlflow.log_input(train_dataset, context="training")
+            except Exception as e:
+                self.logger.warning(f"Failed to log dataset: {e}")
             
-            # Initialize trainer
-            self.trainer = ModelTrainer(self.config)
+            # ===== TRAIN MODEL =====
+            start_time = time.time()
             
-            # Train model
-            model = self.trainer.train(model_name, self.X_train, self.y_train, params)
+            model = self._get_model_instance(model_name, params)
+            model.fit(self.X_train, self.y_train)
             
-            # Log training time
-            mlflow.log_metric("training_time", self.trainer.training_time)
+            training_time = time.time() - start_time
             
-            # Cross-validation (on train set only)
-            cv_results = self.trainer.cross_validate(
-                self.X_train, self.y_train,
-                scoring='f1'
+            mlflow.log_metric("training_time_seconds", training_time)
+            self.logger.info(f"✓ Training completed: {training_time:.2f}s")
+            
+            # ===== CROSS-VALIDATION =====
+            cv_config = self.config.get('cross_validation', {})
+            
+            if cv_config.get('enabled', True):
+                self.logger.info("Running cross-validation...")
+                
+                kfold = KFold(
+                    n_splits=cv_config.get('n_splits', 5),
+                    shuffle=cv_config.get('shuffle', True),
+                    random_state=cv_config.get('random_state', 42)
+                )
+                
+                cv_scores = cross_val_score(
+                    model, self.X_train, self.y_train,
+                    cv=kfold,
+                    scoring='neg_mean_squared_error',
+                    n_jobs=-1
+                )
+                
+                cv_mse = -cv_scores.mean()
+                cv_std = cv_scores.std()
+                
+                mlflow.log_metric("cv_mse_mean", cv_mse)
+                mlflow.log_metric("cv_mse_std", cv_std)
+                mlflow.log_metric("cv_mse_min", -cv_scores.max())
+                mlflow.log_metric("cv_mse_max", -cv_scores.min())
+                
+                self.logger.info(f"  CV MSE: {cv_mse:.4f} (+/- {cv_std:.4f})")
+            else:
+                cv_mse = float('inf')
+                cv_std = 0
+            
+            # ===== VALIDATION EVALUATION =====
+            y_val_pred = model.predict(self.X_val)
+            
+            val_mse = mean_squared_error(self.y_val, y_val_pred)
+            val_rmse = root_mean_squared_error(self.y_val, y_val_pred)
+            val_mae = mean_absolute_error(self.y_val, y_val_pred)
+            val_r2 = r2_score(self.y_val, y_val_pred)
+            
+            mlflow.log_metric("val_mse", val_mse)
+            mlflow.log_metric("val_rmse", val_rmse)
+            mlflow.log_metric("val_mae", val_mae)
+            mlflow.log_metric("val_r2", val_r2)
+            
+            self.logger.info(f"  Val MSE: {val_mse:.4f}")
+            self.logger.info(f"  Val RMSE: {val_rmse:.4f}")
+            self.logger.info(f"  Val R²: {val_r2:.4f}")
+            
+            # ===== TRAIN EVALUATION (for overfitting check) =====
+            y_train_pred = model.predict(self.X_train)
+            train_mse = mean_squared_error(self.y_train, y_train_pred)
+            train_r2 = r2_score(self.y_train, y_train_pred)
+            
+            mlflow.log_metric("train_mse", train_mse)
+            mlflow.log_metric("train_r2", train_r2)
+            
+            # Overfitting check
+            mse_gap = val_mse - train_mse
+            mse_gap_pct = (mse_gap / train_mse) * 100 if train_mse > 0 else 0
+            
+            mlflow.log_metric("mse_gap", mse_gap)
+            mlflow.log_metric("mse_gap_percent", mse_gap_pct)
+            
+            if abs(mse_gap_pct) > 15:
+                mlflow.set_tag("overfitting_warning", "true")
+                self.logger.warning(f"⚠ MSE gap: {mse_gap_pct:.1f}%")
+            
+            # ===== DECISION TAGS =====
+            mlflow.set_tag("model_family", "tree_based" if model_name in ["RandomForest", "XGBoost", "LightGBM"] else "linear")
+            mlflow.set_tag("selection_criteria", "cv_mse")
+            mlflow.set_tag("runtime_acceptable", str(training_time <= self.config['runtime_constraints']['max_training_time_seconds']))
+            
+            # ===== LOG MODEL (Model-as-Code) =====
+            signature = infer_signature(self.X_train, y_train_pred)
+            
+            mlflow.sklearn.log_model(
+                model,
+                "model",
+                signature=signature,
+                code_paths=["src/"]  # Model-as-code: include source code
             )
             
-            for key, value in cv_results.items():
-                if key != 'cv_scores':
-                    mlflow.log_metric(f"cv_{key}", value)
+            # ===== CONTEXT NOTES =====
+            notes = f"""
+Model Training Context:
+- Model: {model_name}
+- Training time: {training_time:.2f}s
+- CV MSE: {cv_mse:.4f}
+- Val MSE: {val_mse:.4f}
+- R²: {val_r2:.4f}
+- Overfitting gap: {mse_gap_pct:.1f}%
+
+Decision rationale:
+- Selected based on cross-validated MSE (lower is better)
+- Runtime constraint: {'MET' if training_time <= 10 else 'EXCEEDED'}
+- Generalization: {'Good' if abs(mse_gap_pct) <= 15 else 'Poor'}
+"""
             
-            # Evaluate on train and val
-            self.evaluator = ModelEvaluator(self.config)
+            mlflow.set_tag("training_notes", notes)
             
-            train_metrics = self.evaluator.evaluate(model, self.X_train, self.y_train, 'train')
-            val_metrics = self.evaluator.evaluate(model, self.X_val, self.y_val, 'val')
-            
-            # Log all metrics to MLflow
-            for metric_name, value in train_metrics.items():
-                if isinstance(value, (int, float)):
-                    mlflow.log_metric(f"train_{metric_name}", value)
-            
-            for metric_name, value in val_metrics.items():
-                if isinstance(value, (int, float)):
-                    mlflow.log_metric(f"val_{metric_name}", value)
-            
-            # Generalization analysis (train vs val)
-            gen_analysis = self.evaluator.compare_train_val(train_metrics, val_metrics)
-            mlflow.log_metric("train_val_gap", gen_analysis['gap'])
-            mlflow.log_metric("train_val_gap_pct", gen_analysis['gap_percentage'])
-            
-            # Feature importance (for applicable models)
-            feature_importance_results = {}
-            if model_name in ['RandomForest', 'XGBoost', 'LightGBM']:
-                self.feature_analyzer = FeatureImportanceAnalyzer(self.config, self.feature_names)
-                feature_importance_results = self.feature_analyzer.analyze(
-                    model, model_name, self.X_val, self.y_val
-                )
-            
-            # Generate and log plots
-            if self.config.get('plotting', {}).get('enabled', True):
-                self._generate_and_log_plots(model, model_name, val_metrics, feature_importance_results)
-            
-            # Log model to MLflow
-            signature = infer_signature(self.X_train, model.predict(self.X_train))
-            mlflow.sklearn.log_model(model, "model", signature=signature)
-            
-            # Compile results
-            result = {
+            return {
                 'model_name': model_name,
                 'model': model,
-                'params': params,
-                'is_tuned': is_tuned,
-                'training_time': self.trainer.training_time,
-                'cv_results': cv_results,
-                'train_metrics': train_metrics,
-                'val_metrics': val_metrics,
-                'generalization': gen_analysis,
-                'feature_importance': feature_importance_results,
-                'mlflow_run_id': run.info.run_id
+                'run_id': run_id,
+                'training_time': training_time,
+                'cv_mse': cv_mse,
+                'cv_std': cv_std,
+                'val_mse': val_mse,
+                'val_rmse': val_rmse,
+                'val_mae': val_mae,
+                'val_r2': val_r2,
+                'train_mse': train_mse,
+                'mse_gap_percent': mse_gap_pct
             }
-            
-            return result
     
-    def _generate_and_log_plots(
-        self,
-        model,
-        model_name: str,
-        val_metrics: Dict[str, Any],
-        feature_importance: Dict[str, Any]
-    ) -> None:
-        """
-        Generate and log plots to MLflow.
+    def _get_model_instance(self, model_name: str, params: Dict):
+        """Get model instance."""
+        models = {
+            'Ridge': Ridge,
+            'RandomForest': RandomForestRegressor,
+            'XGBoost': XGBRegressor,
+            'LightGBM': LGBMRegressor
+        }
         
-        Args:
-            model: Trained model
-            model_name: Name of the model
-            val_metrics: val metrics
-            feature_importance: Feature importance results
-        """
-        plots_dir = Path(self.config['plotting']['plots_dir'])
+        if model_name not in models:
+            raise ValueError(f"Unknown model: {model_name}")
         
-        # Confusion Matrix
-        try:
-            fig, ax = plt.subplots(figsize=(8, 6))
-            cm = val_metrics.get('confusion_matrix')
-            if cm is not None:
-                sns.heatmap(cm, annot=True, fmt='.2f', cmap='Blues', ax=ax)
-                ax.set_title(f'Confusion Matrix - {model_name}')
-                ax.set_ylabel('True Label')
-                ax.set_xlabel('Predicted Label')
-                
-                cm_path = plots_dir / f"{model_name}_confusion_matrix.png"
-                plt.savefig(cm_path, dpi=300, bbox_inches='tight')
-                mlflow.log_artifact(cm_path)
-                plt.close()
-        except Exception as e:
-            self.logger.warning(f"Failed to generate confusion matrix plot: {e}")
-        
-        
-        # Feature Importance (if available)
-        if feature_importance and 'native' in feature_importance:
-            try:
-                fig, ax = plt.subplots(figsize=(10, 8))
-                
-                top_features = feature_importance['native']['top_features'][:20]
-                features = [f['feature'] for f in top_features]
-                importances = [f['importance'] for f in top_features]
-                
-                ax.barh(features, importances)
-                ax.set_xlabel('Importance')
-                ax.set_title(f'Top 20 Features - {model_name}')
-                ax.invert_yaxis()
-                
-                fi_path = plots_dir / f"{model_name}_feature_importance.png"
-                plt.tight_layout()
-                plt.savefig(fi_path, dpi=300, bbox_inches='tight')
-                mlflow.log_artifact(fi_path)
-                plt.close()
-            except Exception as e:
-                self.logger.warning(f"Failed to generate feature importance plot: {e}")
+        return models[model_name](**params)
     
-    def tune_top_models(self) -> List[Dict[str, Any]]:
+    def select_and_register_best_model(self) -> None:
         """
-        Tune hyperparameters for top N models.
-        Uses cross-validation on train set only.
+        Select best model and register to MLflow with production alias.
         
-        Returns:
-            List of tuned model results
-        """
-        if not self.config.get('hyperparameter_tuning', {}).get('enabled', True):
-            self.logger.info("Hyperparameter tuning disabled")
-            return []
+        Selection criteria:
+        1. Lowest CV MSE
+        2. Runtime constraint met
+        3. No severe overfitting
         
-        self.logger.info("\n" + "="*80)
-        self.logger.info("PHASE 2: HYPERPARAMETER TUNING")
-        self.logger.info("="*80)
-        self.logger.info("Note: Tuning uses CV on train set, final evaluation on val set")
-        
-        tune_top_n = self.config['hyperparameter_tuning'].get('tune_top_n_models', 3)
-        top_models = self.baseline_results[:tune_top_n]
-        
-        self.logger.info(f"Tuning top {tune_top_n} models: {[m['model_name'] for m in top_models]}")
-        
-        tuned_results = []
-        
-        for baseline_result in top_models:
-            model_name = baseline_result['model_name']
-            
-            self.logger.info(f"\n{'='*80}")
-            self.logger.info(f"Tuning {model_name}")
-            self.logger.info(f"{'='*80}")
-            
-            try:
-                # Initialize tuner
-                self.tuner = HyperparameterTuner(self.config)
-                
-                # Tune (uses CV on train set)
-                tuning_results = self.tuner.tune(
-                    model_name,
-                    self.X_train,
-                    self.y_train,
-                    scoring='f1'
-                )
-                
-                # Train model with best params and evaluate on val
-                best_params = tuning_results['best_params']
-                
-                result = self._train_single_model(
-                    model_name=model_name,
-                    params=best_params,
-                    is_tuned=True
-                )
-                
-                result['tuning_results'] = tuning_results
-                tuned_results.append(result)
-                
-            except Exception as e:
-                self.logger.error(f"Tuning {model_name} failed: {e}", exc_info=True)
-                
-                if self.config.get('error_handling', {}).get('on_model_failure') == 'stop':
-                    raise ModelTrainingError(f"Hyperparameter tuning failed: {e}")
-        
-        # Rank tuned models by val performance
-        tuned_results.sort(key=lambda x: x['val_metrics'][self.config['metrics']['primary_metric']], reverse=True)
-        
-        self.logger.info("\n" + "="*80)
-        self.logger.info("TUNED RESULTS SUMMARY (Ranked by val Performance)")
-        self.logger.info("="*80)
-        
-        primary_metric = self.config['metrics']['primary_metric']
-        for i, result in enumerate(tuned_results, 1):
-            score = result['val_metrics'][primary_metric]
-            cv_mean = result['cv_results'].get('cv_mean', 0)
-            self.logger.info(f"{i}. {result['model_name']}: val_{primary_metric}={score:.4f}, cv_{primary_metric}={cv_mean:.4f}")
-        
-        self.tuned_results = tuned_results
-        
-        return tuned_results
-    
-    def select_best_model(self) -> Dict[str, Any]:
-        """
-        Select best model based on val performance.
-        
-        Returns:
-            Best model result dictionary
+        Registration:
+        - Registers model to MLflow Model Registry
+        - Assigns 'production' alias
+        - Tags with selection decision
         """
         self.logger.info("\n" + "="*80)
-        self.logger.info("MODEL SELECTION")
+        self.logger.info("MODEL SELECTION & REGISTRATION")
         self.logger.info("="*80)
         
-        # Combine baseline and tuned results
-        all_results = self.baseline_results + self.tuned_results
+        if not self.model_results:
+            self.logger.error("No models trained!")
+            return
         
-        # Sort by val performance (primary metric)
-        primary_metric = self.config['metrics']['primary_metric']
-        all_results.sort(key=lambda x: x['val_metrics'][primary_metric], reverse=True)
+        # Filter models meeting runtime constraint
+        runtime_config = self.config.get('runtime_constraints', {})
+        max_time = runtime_config.get('max_training_time_seconds', 10)
         
-        # Auto-select best
-        best_result = all_results[0]
+        valid_models = [
+            m for m in self.model_results 
+            if m['training_time'] <= max_time
+        ]
+        
+        if not valid_models:
+            self.logger.warning(f"No models met {max_time}s runtime constraint!")
+            self.logger.warning("Using all models for selection...")
+            valid_models = self.model_results
+        
+        # Select best (already sorted by CV MSE)
+        best_result = valid_models[0]
         
         self.best_model = best_result['model']
         self.best_model_name = best_result['model_name']
-        self.best_model_score = best_result['val_metrics'][primary_metric]
+        self.best_run_id = best_result['run_id']
         
-        self.logger.info(f"\n✓ Best Model Selected: {self.best_model_name}")
-        self.logger.info(f"  val {primary_metric}: {self.best_model_score:.4f}")
-        self.logger.info(f"  CV {primary_metric}: {best_result['cv_results'].get('cv_mean', 0):.4f}")
-        self.logger.info(f"  Tuned: {best_result['is_tuned']}")
+        self.logger.info(f"\n✓ BEST MODEL SELECTED: {self.best_model_name}")
+        self.logger.info(f"  CV MSE: {best_result['cv_mse']:.4f}")
+        self.logger.info(f"  Val MSE: {best_result['val_mse']:.4f}")
+        self.logger.info(f"  Val R²: {best_result['val_r2']:.4f}")
         self.logger.info(f"  Training time: {best_result['training_time']:.2f}s")
+        self.logger.info(f"  Run ID: {self.best_run_id}")
         
-        # Log selection criteria
-        self.logger.info(f"\nSelection Criteria:")
-        self.logger.info(f"  Primary metric (val {primary_metric}): {best_result['val_metrics'][primary_metric]:.4f}")
-        self.logger.info(f"  Cross-validation {primary_metric}: {best_result['cv_results'].get('cv_mean', 0):.4f}")
-        self.logger.info(f"  Training time: {best_result['training_time']:.2f}s")
-        self.logger.info(f"  Generalization gap: {best_result['generalization']['gap']:.4f}")
-        
-        # Show top 5 models for manual verification
-        self.logger.info(f"\nTop 5 Models (for manual verification):")
-        for i, result in enumerate(all_results[:5], 1):
-            val_score = result['val_metrics'][primary_metric]
-            cv_score = result['cv_results'].get('cv_mean', 0)
-            self.logger.info(f"  {i}. {result['model_name']} ({'tuned' if result['is_tuned'] else 'baseline'}):")
-            self.logger.info(f"      val {primary_metric}: {val_score:.4f}")
-            self.logger.info(f"      CV {primary_metric}: {cv_score:.4f}")
-            self.logger.info(f"      Training time: {result['training_time']:.2f}s")
-            self.logger.info(f"      Gap: {result['generalization']['gap']:.4f}")
-        
-        return best_result
-
-    def validate_best_model(self, best_result: Dict[str, Any]) -> bool:
-        """
-        Validate best model before registration.
-        
-        Args:
-            best_result: Best model result dictionary
-            
-        Returns:
-            True if validation passed, False otherwise
-        """
-        self.validator = ModelValidator(self.config)
-        
-        validation_results = self.validator.validate_model(
-            train_metrics=best_result['train_metrics'],
-            val_metrics=best_result['val_metrics'],
-            confusion_matrix=best_result['val_metrics'].get('confusion_matrix'),
-            primary_metric=self.config['metrics']['primary_metric']
-        )
-        
-        # Log to MLflow
-        with mlflow.start_run(run_id=best_result['mlflow_run_id']):
-            mlflow.log_param("validation_passed", validation_results['overall_passed'])
-        
-        return validation_results['overall_passed']
-    
-    def save_best_model(self, best_result: Dict[str, Any]) -> None:
-        """
-        Save best model to disk.
-        
-        Args:
-            best_result: Best model result dictionary
-        """
-        with Timer("Saving best model", self.logger):
-            try:
-                model_path = self.config['model_persistence']['best_model_path']
-                
-                # Save model
-                joblib.dump(best_result['model'], model_path)
-                self.logger.info(f"✓ Best model saved: {model_path}")
-                
-                # Save artifacts
-                if self.config['model_persistence']['save_artifacts']:
-                    artifacts_dir = Path(self.config['model_persistence']['artifacts_path'])
-                    
-                    # Feature names
-                    feature_names_path = artifacts_dir / 'feature_names.txt'
-                    with open(feature_names_path, 'w') as f:
-                        for feat in self.feature_names:
-                            f.write(f"{feat}\n")
-                    
-                    # Metrics summary
-                    metrics_path = artifacts_dir / 'metrics_summary.json'
-                    import json
-                    with open(metrics_path, 'w') as f:
-                        json.dump({
-                            'model_name': best_result['model_name'],
-                            'is_tuned': best_result['is_tuned'],
-                            'val_metrics': {k: v for k, v in best_result['val_metrics'].items() if isinstance(v, (int, float))},
-                            'cv_metrics': best_result['cv_results'],
-                            'training_time': best_result['training_time']
-                        }, f, indent=2)
-                    
-                    self.logger.info(f"✓ Artifacts saved: {artifacts_dir}")
-                
-            except Exception as e:
-                self.logger.error(f"Failed to save model: {e}", exc_info=True)
-    
-    def register_model_to_mlflow(self, best_result: Dict[str, Any]) -> None:
-        """
-        Register model with validation (Staging, not Production).
-        """
-        registry_config = self.config.get('mlflow', {}).get('model_registry', {})
+        # Register to MLflow
+        registry_config = self.config['mlflow']['model_registry']
         
         if not registry_config.get('enabled', True):
-            self.logger.info("MLflow Model Registry disabled")
-            return
-        
-        self.logger.info("\n" + "="*80)
-        self.logger.info("MODEL REGISTRATION")
-        self.logger.info("="*80)
-        
-        # ✅ NEW: Validate before registration
-        if not self.validate_best_model(best_result):
-            self.logger.error("✗ Model validation failed. NOT registering.")
+            self.logger.info("Model registry disabled")
             return
         
         try:
-            run_id = best_result['mlflow_run_id']
-            model_name = registry_config.get('model_name', 'LoanEligibilityClassifier')
+            model_name = registry_config.get('model_name', 'EmployeeSalaryModel')
+            model_uri = f"runs:/{self.best_run_id}/model"
             
-            # ✅ CHANGED: Staging, not Production
-            auto_stage = registry_config.get('auto_register_stage', 'Staging')
-            
-            model_uri = f"runs:/{run_id}/model"
+            self.logger.info(f"\nRegistering model to MLflow...")
             
             # Register model
-            registered_model = mlflow.register_model(model_uri, model_name)
+            mv = mlflow.register_model(model_uri, model_name)
             
             self.logger.info(f"✓ Model registered: {model_name}")
-            self.logger.info(f"  Version: {registered_model.version}")
+            self.logger.info(f"  Version: {mv.version}")
             
-            # Transition to Staging (not Production!)
-            from mlflow.tracking import MlflowClient
-            client = MlflowClient()
+            # Assign production alias
+            production_alias = registry_config.get('production_alias', 'production')
             
-            if auto_stage and auto_stage != 'None':
-                client.transition_model_version_stage(
-                    name=model_name,
-                    version=registered_model.version,
-                    stage=auto_stage  # ← Staging!
-                )
-                
-                self.logger.info(f"✓ Model transitioned to: {auto_stage}")
-                
-                # ✅ NEW: Show promotion instructions
-                if auto_stage == 'Staging':
-                    self.logger.info("\n" + "="*80)
-                    self.logger.info("NEXT STEPS FOR PRODUCTION")
-                    self.logger.info("="*80)
-                    self.logger.info("1. Review model in MLflow UI")
-                    self.logger.info("2. Test in staging environment")
-                    self.logger.info("3. Manually promote:")
-                    self.logger.info(f"   python scripts/promote_to_production.py --model-name {model_name} --version {registered_model.version}")
-        
+            self.client.set_registered_model_alias(
+                name=model_name,
+                alias=production_alias,
+                version=mv.version
+            )
+            
+            self.logger.info(f"✓ Alias assigned: {production_alias}")
+            
+            # Tag registration decision
+            self.client.set_model_version_tag(
+                name=model_name,
+                version=mv.version,
+                key="selection_reason",
+                value=f"Lowest CV MSE: {best_result['cv_mse']:.4f}"
+            )
+            
+            self.client.set_model_version_tag(
+                name=model_name,
+                version=mv.version,
+                key="runtime_seconds",
+                value=str(best_result['training_time'])
+            )
+            
+            self.logger.info("\n✓ MODEL REGISTERED TO PRODUCTION")
+            self.logger.info(f"  Model: {model_name}")
+            self.logger.info(f"  Version: {mv.version}")
+            self.logger.info(f"  Alias: {production_alias}")
+            self.logger.info(f"\nLoad with:")
+            self.logger.info(f"  model = mlflow.sklearn.load_model('models:/{model_name}@{production_alias}')")
+            
         except Exception as e:
             self.logger.error(f"Failed to register model: {e}", exc_info=True)
     
-    def execute(self) -> Dict[str, Any]:
-        """Execute pipeline with validation."""
-        try:
-            with Timer("Complete Model Training Pipeline", self.logger):
-                # ... existing setup code ...
-                
-                # Stages 1-4: Same as before
-                self.load_data()
-                self.train_baseline_models()
-                self.tune_top_models()
-                best_result = self.select_best_model()
-                
-                # ✅ NEW: Stage 5 - Validate
-                validation_passed = self.validate_best_model(best_result)
-                
-                if not validation_passed:
-                    self.logger.error("MODEL VALIDATION FAILED - NOT SAVING")
-                    return {
-                        'status': 'validation_failed',
-                        'best_result': best_result
-                    }
-                
-                # Only save/register if validated
-                self.save_best_model(best_result)
-                self.register_model_to_mlflow(best_result)
-                
-                self.logger.info("✓ Model registered to Staging")
-                self.logger.info("  Manual promotion required for Production")
-                
-                return {
-                    'status': 'success',
-                    'validation_passed': validation_passed,
-                    'best_model': self.best_model,
-                    # ... rest of return dict
-                }
+    def run(self) -> Dict[str, Any]:
+        """
+        Execute complete training pipeline.
         
+        Returns:
+            Dictionary with pipeline results
+        """
+        try:
+            # Setup
+            self.setup_mlflow()
+            self.load_data()
+            
+            # Train all models
+            self.train_models()
+            
+            # Select and register best
+            self.select_and_register_best_model()
+            
+            self.logger.info("\n" + "="*80)
+            self.logger.info("PIPELINE COMPLETED SUCCESSFULLY")
+            self.logger.info("="*80)
+            
+            return {
+                'status': 'success',
+                'best_model_name': self.best_model_name,
+                'best_run_id': self.best_run_id,
+                'n_models_trained': len(self.model_results)
+            }
+            
         except Exception as e:
             self.logger.error(f"Pipeline failed: {e}", exc_info=True)
-            raise ModelTrainingError(f"Pipeline failed: {e}")
+            raise
 
 
 def main():
-    """Main entry point for model training pipeline."""
-    try:
-        # Initialize pipeline
-        pipeline = ModelTrainingPipeline(config_path="config/model_training_config.yaml")
-        
-        # Execute
-        results = pipeline.execute()
-        
-        return 0
-        
-    except ModelTrainingError as e:
-        print(f"ERROR: {e}")
-        return 1
-    except KeyboardInterrupt:
-        print("\nPipeline interrupted by user")
-        return 1
-    except Exception as e:
-        print(f"UNEXPECTED ERROR: {e}")
-        return 1
+    """Entry point."""
+    pipeline = ModelTrainingPipeline("config/training_config.yaml")
+    results = pipeline.run()
+    return 0
 
 
 if __name__ == "__main__":

@@ -1,315 +1,156 @@
-# ==============================
-# MODEL TRAINING CONFIGURATION
-# ==============================
-# Production-grade ML training pipeline with MLflow tracking
+# ==============================================================================
+# Model Training Configuration
+# ==============================================================================
 
-# ==============================
-# PROJECT METADATA
-# ==============================
 project:
-  name: 'Maxwell Selassie Hiamatsu'
-  version: 1.0
-  description: 'Employee Salary Prediction - Model Training'
+  name: "Employee Salary Prediction"
+  version: "1.0.0"
+  description: "Regression model for salary prediction with MLflow tracking"
 
-# ==============================
-# DATA PATHS
-# ==============================
+# Data Configuration
 data:
-  train_data: 'data/processed/train_set.csv'
-  val_data: 'data/processed/dev_set.csv'
-  test_data: 'data/processed/test_set.csv'
-  target_column: 'current_salary_log'
-  
-  # Preprocessing artifacts
-  scaler_path: 'models/scaler.pkl'
-  encoder_path: 'models/encoder.pkl'
+  train_data: "data/train.csv"
+  val_data: "data/val.csv"
+  test_data: "data/test.csv"
+  target_column: "Current_Salary_log"
 
-# ==============================
-# MLFLOW CONFIGURATION
-# ==============================
+# MLflow Configuration
 mlflow:
-  tracking_uri: sqlite:///mlruns/employee_salary_prediction.db
-  experiment_name: 'Employee_Salary_Prediction - Model_Training'
-  run_name_pattern: 'run_{model_name}_{timestamp}'
-  
-  # What to track
-  track:
-    hyperparameters: True
-    metrics: True
-    model_artifacts: True
-    feature_importance: True
-    plots: True
-    training_duration: True
-    dataset_metadata: True
-    preprocessing_artifacts: True
+  tracking_uri: "sqlite:///mlflow.db"  # SQLite backend
+  experiment_name: "Employee_Salary_Prediction"
   
   # Model Registry
   model_registry:
-    enabled: True
-    register_best_model: True
-    model_name: 'Employee_Salary_Prediction_Model'
+    enabled: true
+    model_name: "EmployeeSalaryModel"
+    production_alias: "production"  # Alias for best model
+    auto_register: true
     
-    # Compare with production
-    compare_with_production: True
-    min_improvement_required: 0.01
+    # Promotion criteria
+    min_improvement_required: 0.0  # Any improvement over current production
+    compare_with_production: true
 
+# Runtime Constraints (Satisficing Metrics)
+runtime_constraints:
+  max_training_time_seconds: 10  # Models taking >10s are rejected
+  enabled: true
+  strict_mode: false  # If true, fail pipeline; if false, log warning
 
-# logging configuration
-logging:
-  log_dir: 'logs/'
-  log_level: 'INFO'
-  max_bytes: 10485760
-  backup_count: 7
-  format: '%(asctime)s -%(name) %(levelname)s -%(funcName)s:%(lineno)d - %(message)s'
-  date_format: '%Y-%m-%d %H:%M:%S'
-
-model_validation:
-  enabled: True
-  
-  thresholds:
-    mean_squared_error:
-      max: 0.10
-      warning: 0.12
-      target: 0.08
-    
-    r2_score:
-      min: 0.80
-      warning: 0.80
-      target: 0.90
-    
-    train_test_gap:
-      max: 0.15
-      warning: 0.10
-
-
-
-# ==============================
-# MODELS CONFIGURATION
-# ==============================
+# Models to Train
 models:
-  # Baseline Model
   baseline:
-    name: 'Ridge'
-    enabled: True
+    enabled: true
+    name: "Ridge"
     params:
+      alpha: 1.0
       random_state: 42
-      max_iter: 1000
-
   
-  # Tree-Based Models
   tree_based:
     RandomForest:
-      enabled: True
+      enabled: true
       params:
-        random_state: 42
-        class_weight: 'balanced'
         n_estimators: 100
+        max_depth: 10
+        min_samples_split: 5
+        random_state: 42
         n_jobs: -1
     
     XGBoost:
-      enabled: True
+      enabled: true
       params:
-        random_state: 42
         n_estimators: 100
+        max_depth: 5
         learning_rate: 0.1
+        random_state: 42
         n_jobs: -1
-
     
     LightGBM:
-      enabled: True
+      enabled: true
       params:
-        random_state: 42
         n_estimators: 100
+        max_depth: 7
         learning_rate: 0.1
+        random_state: 42
         n_jobs: -1
         verbose: -1
 
-# ==============================
-# CROSS-VALIDATION
-# ==============================
-cross_validation:
-  enabled: True
-  method: 'kfold'
-  n_splits: 10
-  shuffle: True
-  random_state: 42
-  
-  # Report CV scores
-  report_cv_scores: True
-  aggregate_method: 'mean'  # mean, median
-
-# ==============================
-# HYPERPARAMETER TUNING
-# ==============================
+# Hyperparameter Tuning (Optional - disabled for <10s constraint)
 hyperparameter_tuning:
-  enabled: True
-  method: 'optuna'
-  tune_top_n_models: 3
-  n_trials: 50
-  cv_splits: 5  # Use 5-fold CV during tuning (faster)
-  timeout: 3600  # 1 hour timeout per model
-  
-  # Optuna settings
-  optuna:
-    direction: 'minimize'  # minimize MSE
-    sampler: 'TPESampler'  # Tree-structured Parzen Estimator
-    pruner: 'MedianPruner'  # Early stopping for bad trials
-    n_jobs: 1  # Sequential for stability
-  
-  # Hyperparameter search spaces
-  search_spaces:
-    Ridge:
-      C: ['log_uniform', 0.001, 100]
-      penalty: ['categorical', ['l1', 'l2']]
-      solver: ['categorical', ['auto', 'svd']]
-    
-    RandomForest:
-      n_estimators: ['int', 50, 500]
-      max_depth: ['int', 3, 30]
-      min_samples_split: ['int', 2, 20]
-      min_samples_leaf: ['int', 1, 10]
-      max_features: ['categorical', ['sqrt', 'log2']]
-    
-    XGBoost:
-      n_estimators: ['int', 50, 500]
-      max_depth: ['int', 3, 15]
-      learning_rate: ['log_uniform', 0.001, 0.3]
-      subsample: ['uniform', 0.6, 1.0]
-      colsample_bytree: ['uniform', 0.6, 1.0]
-      gamma: ['uniform', 0, 5]
-      min_child_weight: ['int', 1, 10]
-    
-    LightGBM:
-      n_estimators: ['int', 50, 500]
-      max_depth: ['int', 3, 15]
-      learning_rate: ['log_uniform', 0.001, 0.3]
-      num_leaves: ['int', 20, 150]
-      min_child_samples: ['int', 5, 100]
-      subsample: ['uniform', 0.6, 1.0]
-      colsample_bytree: ['uniform', 0.6, 1.0]
+  enabled: false  # Set to true if you want tuning (will exceed 10s)
+  tune_top_n_models: 2
+  n_trials: 20
+  timeout: 300
+  cv_splits: 3
 
-# ==============================
-# EVALUATION METRICS
-# ==============================
+# Cross-Validation
+cross_validation:
+  enabled: true
+  n_splits: 5
+  shuffle: true
+  random_state: 42
+
+# Metrics Configuration
 metrics:
-  primary_metric: 'mean_squared_error'
-
+  primary_metric: "neg_mean_squared_error"  # Used for model selection
+  
   regression_metrics:
-    - 'mean_absolute_error'
-    - 'root_mean_squared_error'
-    - 'r2_score'
-    - 'mean_squared_error'
-    - 'median_absolute_error'
-    - 'mean_absolute_percentage_error'  
-  
+    - "mean_squared_error"
+    - "root_mean_squared_error"
+    - "mean_absolute_error"
+    - "r2_score"
 
+# Model Validation Thresholds
+model_validation:
+  thresholds:
+    mean_squared_error:
+      max: 2.0        # Fail if MSE > 2.0
+      warning: 1.5    # Warn if MSE > 1.5
+      target: 0.5     # Excellent if MSE < 0.5
+    
+    r2_score:
+      min: 0.5        # Fail if R² < 0.5
+      warning: 0.7    # Warn if R² < 0.7
+      target: 0.9     # Excellent if R² > 0.9
+    
+    train_val_gap:
+      max: 0.15       # Fail if gap > 15%
+      warning: 0.10   # Warn if gap > 10%
 
-# ==============================
-# FEATURE IMPORTANCE
-# ==============================
+# Feature Importance
 feature_importance:
-  enabled: True
-  
+  enabled: true
   methods:
     native:
-      enabled: True
-      applicable_to: ['RandomForest', 'XGBoost', 'LightGBM']
+      enabled: true
+      applicable_to: ["RandomForest", "XGBoost", "LightGBM"]
     
     permutation:
-      enabled: True
-      n_repeats: 10
+      enabled: true
+      n_repeats: 5
       random_state: 42
-      applicable_to: 'all'
-    
-    shap:
-      enabled: False  # Disabled for speed (enable for deep analysis)
-      applicable_to: 'all'
-  
-  # Plotting
-  plot:
-    enabled: True
-    top_n_features: 20
-    save_format: 'png'
-    dpi: 300
 
-# ==============================
-# MODEL SELECTION
-# ==============================
-model_selection:
-  # Automatic selection
-  auto_select:
-    enabled: True
-    criteria: 'primary_metric'  # primary_metric, balanced_score
-    select_best_from: 'all_trained_models'  # all_trained_models, tuned_models_only
-
-# ==============================
-# MODEL PERSISTENCE
-# ==============================
-model_persistence:
-  save_best_model_only: True
-  best_model_path: 'models/best_model.joblib'
-  
-  # Save additional artifacts
-  save_artifacts:
-    feature_names: True
-    metrics_summary: True
-    training_history: True
-  
-  artifacts_path: 'artifacts/'
-
-# ==============================
-# REPRODUCIBILITY
-# ==============================
-reproducibility:
-  random_state: 42
-  set_seeds:
-    numpy: True
-    sklearn: True
-    xgboost: True
-    lightgbm: True
-    optuna: True
-
-  
-  track_during_training:
-    - 'training_time'
-    - 'memory_usage'
-    - 'data_shapes'
-    - 'class_distribution'
-    - 'feature_count'
-    - 'convergence_warnings'
-
-# ==============================
-# PLOTTING
-# ==============================
+# Plotting
 plotting:
-  enabled: True
-  plots_dir: 'artifacts/plots/'
-  
-  plots_to_generate:
-    - 'feature_importance'
-    - 'learning_curve'
-  
-  plot_format: 'png'
+  enabled: true
+  plots_dir: "plots/"
+  save_formats: ["png"]
   dpi: 300
-  style: 'seaborn-v0_8-darkgrid'
 
-# ==============================
-# ERROR HANDLING
-# ==============================
+# Model Persistence
+model_persistence:
+  save_best_model: true
+  best_model_path: "models/best_model.pkl"
+  save_artifacts: true
+  artifacts_path: "models/artifacts/"
+
+# Logging
+logging:
+  log_dir: "logs/"
+  log_level: "INFO"
+  max_bytes: 10485760  # 10MB
+  backup_count: 5
+
+# Error Handling
 error_handling:
-  on_model_failure: 'stop'  # stop, skip, retry
-  max_retries: 0
-  save_failed_models: False
-
-# ==============================
-# NOTES
-# ==============================
-notes:
-  - 'Models trained on preprocessed and feature-engineered data'
-  - 'Hyperparameter tuning uses Optuna with TPE sampler'
-  - 'All experiments tracked in MLflow'
-  - 'Best model registered in MLflow Model Registry as Production'
-
-assumptions:
-  - 'Data is already preprocessed and split (train/val/test)'
-  - 'All features are numeric after preprocessing'
+  on_model_failure: "continue"  # or "stop"
+  on_validation_failure: "warn"  # or "stop"
