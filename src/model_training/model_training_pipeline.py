@@ -384,32 +384,6 @@ class ModelTrainingPipeline:
         except Exception as e:
             self.logger.warning(f"Failed to generate confusion matrix plot: {e}")
         
-        # ROC Curve
-        try:
-            fig, ax = plt.subplots(figsize=(8, 6))
-            y_pred_proba = model.predict_proba(self.X_val)[:, 1]
-            RocCurveDisplay.from_predictions(self.y_val, y_pred_proba, ax=ax)
-            ax.set_title(f'ROC Curve - {model_name}')
-            
-            roc_path = plots_dir / f"{model_name}_roc_curve.png"
-            plt.savefig(roc_path, dpi=300, bbox_inches='tight')
-            mlflow.log_artifact(roc_path)
-            plt.close()
-        except Exception as e:
-            self.logger.warning(f"Failed to generate ROC curve: {e}")
-        
-        # Precision-Recall Curve
-        try:
-            fig, ax = plt.subplots(figsize=(8, 6))
-            PrecisionRecallDisplay.from_predictions(self.y_val, y_pred_proba, ax=ax)
-            ax.set_title(f'Precision-Recall Curve - {model_name}')
-            
-            pr_path = plots_dir / f"{model_name}_pr_curve.png"
-            plt.savefig(pr_path, dpi=300, bbox_inches='tight')
-            mlflow.log_artifact(pr_path)
-            plt.close()
-        except Exception as e:
-            self.logger.warning(f"Failed to generate PR curve: {e}")
         
         # Feature Importance (if available)
         if feature_importance and 'native' in feature_importance:
