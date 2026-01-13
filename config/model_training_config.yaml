@@ -151,7 +151,7 @@ hyperparameter_tuning:
   
   # Optuna settings
   optuna:
-    direction: 'maximize'  # maximize F1-score
+    direction: 'minimize'  # minimize MSE
     sampler: 'TPESampler'  # Tree-structured Parzen Estimator
     pruner: 'MedianPruner'  # Early stopping for bad trials
     n_jobs: 1  # Sequential for stability
