@@ -270,7 +270,9 @@ class ModelTrainingPipeline(LoggerMixin):
         """
         run_name = f"{model_name}_{self.timestamp}"
         
-        with mlflow.start_run(run_name=run_name) as run:
+        # This runs inside the stage-level mlflow_stage_run("training", ...)
+        # so we explicitly mark it as a nested run.
+        with mlflow.start_run(run_name=run_name, nested=True) as run:
             run_id = run.info.run_id
             self.logger.info(f"MLflow Run ID: {run_id}")
             
