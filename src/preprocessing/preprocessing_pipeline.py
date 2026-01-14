@@ -22,9 +22,14 @@ from preprocessing.config_validator import ConfigValidator
 from preprocessing.data_validator import DataValidator
 
 from utils import (
-    ensure_directory, setup_logger, Timer, 
-    read_yaml, write_csv, read_csv
+    ensure_directory,
+    setup_logger,
+    Timer,
+    read_yaml,
+    write_csv,
+    read_csv,
 )
+from utils.mlflow_utils import mlflow_stage_run
 
 
 class PreprocessingPipeline:
@@ -148,7 +153,7 @@ class PreprocessingPipeline:
     
     def fit_transform(self) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         """
-        Complete preprocessing pipeline with proper ordering.
+        Complete preprocessing pipeline with proper ordering and MLflow tracking.
         
         Key changes:
         - Encoding happens AFTER split (not before)
@@ -165,87 +170,103 @@ class PreprocessingPipeline:
             self.logger.info('=' * 80)
             self.logger.info('STARTING PREPROCESSING PIPELINE')
             self.logger.info('=' * 80)
-            
-            # ================================================================
-            # STAGE 0: Load Data
-            # ================================================================
-            self.logger.info('\n[Stage 0] Loading Data...')
-            df = self._load_data()
-            
-            # ================================================================
-            # STAGE 1: Pre-Split Cleaning
-            # ================================================================
-            self.logger.info('\n[Stage 1] Pre-split Data Cleaning...')
-            
-            initial_rows = len(df)
-            
-            df = self.duplicate_handler.handle_duplicates(df)
-            df = self.missing_handler.handle_missing(df, fit=True)  
-            
-            final_rows = len(df)
-            self.logger.info(
-                f'Cleaning complete: {initial_rows} → {final_rows} rows '
-                f'({(initial_rows - final_rows) / initial_rows * 100:.1f}% removed)'
-            )
-            
-            # ================================================================
-            # STAGE 2: Split Data
-            # ================================================================
-            self.logger.info('\n[Stage 2] Splitting Data...')
-            train_set, dev_set, test_set = self.splitter.split_data(df)
-            
-            #  Validate splits
-            self.logger.info('Validating data splits...')
-            if train_set.shape[1] != dev_set.shape[1] or train_set.shape[1] != test_set.shape[1]:
-                raise ValueError('Feature count mismatch across splits')
-            
-            # ================================================================
-            # STAGE 3: Fit Transformers on Training Set
-            # ================================================================
-            self.logger.info('\n[Stage 3] Fitting Transformers on Training Data...')
-            
-            train_set = self.outlier_handler.handle_outliers(train_set, fit=True)
-            # Encoding now happens AFTER split
-            train_set = self.feature_encoder.encode_features(train_set, fit=True)
-            train_set = self.feature_transformer.transform_features(train_set, fit=True)
-            train_set = self._drop_columns(train_set)
-            
-            # ================================================================
-            # STAGE 4: Transform Dev Set
-            # ================================================================
-            self.logger.info('\n[Stage 4] Transforming Dev Set...')
-            
-            dev_set = self.outlier_handler.handle_outliers(dev_set, fit=False)
-            dev_set = self.feature_encoder.encode_features(dev_set, fit=False)
-            dev_set = self.feature_transformer.transform_features(dev_set, fit=False)
-            dev_set = self._drop_columns(dev_set)
-            
-            # ================================================================
-            # STAGE 5: Transform Test Set
-            # ================================================================
-            self.logger.info('\n[Stage 5] Transforming Test Set...')
-            
-            test_set = self.outlier_handler.handle_outliers(test_set, fit=False)
-            test_set = self.feature_encoder.encode_features(test_set, fit=False)
-            test_set = self.feature_transformer.transform_features(test_set, fit=False)
-            test_set = self._drop_columns(test_set)
-            
-            # ================================================================
-            # STAGE 6: Final Validation
-            # ================================================================
-            self.logger.info('\n[Stage 6] Final Validation...')
-            
-            #  Validate processed data
-            self.data_validator.validate_processed_data(train_set, dev_set, test_set)
-            
-            # ================================================================
-            # STAGE 7: Save Outputs
-            # ================================================================
-            self.logger.info('\n[Stage 7] Saving Outputs...')
-            self._save_datasets(train_set, dev_set, test_set)
-            self._save_pipeline()
-            #  Save processing metadata
-            self._save_metadata(train_set, dev_set, test_set)
+
+            with mlflow_stage_run(
+                stage="preprocessing",
+                run_name="preprocessing_pipeline_v2",
+                tags={"pipeline_version": "2.0-fixed"},
+            ):
+                # ================================================================
+                # STAGE 0: Load Data
+                # ================================================================
+                self.logger.info('\n[Stage 0] Loading Data...')
+                df = self._load_data()
+                mlflow.log_metric("raw_n_rows", len(df))
+                mlflow.log_metric("raw_n_cols", df.shape[1])
+                
+                # ================================================================
+                # STAGE 1: Pre-Split Cleaning
+                # ================================================================
+                self.logger.info('\n[Stage 1] Pre-split Data Cleaning...')
+                
+                initial_rows = len(df)
+                
+                df = self.duplicate_handler.handle_duplicates(df)
+                df = self.missing_handler.handle_missing(df, fit=True)  
+                
+                final_rows = len(df)
+                self.logger.info(
+                    f'Cleaning complete: {initial_rows} → {final_rows} rows '
+                    f'({(initial_rows - final_rows) / initial_rows * 100:.1f}% removed)'
+                )
+                mlflow.log_metric("rows_after_cleaning", final_rows)
+                mlflow.log_metric("rows_removed_cleaning", initial_rows - final_rows)
+                
+                # ================================================================
+                # STAGE 2: Split Data
+                # ================================================================
+                self.logger.info('\n[Stage 2] Splitting Data...')
+                train_set, dev_set, test_set = self.splitter.split_data(df)
+                
+                #  Validate splits
+                self.logger.info('Validating data splits...')
+                if train_set.shape[1] != dev_set.shape[1] or train_set.shape[1] != test_set.shape[1]:
+                    raise ValueError('Feature count mismatch across splits')
+                mlflow.log_metric("train_rows", len(train_set))
+                mlflow.log_metric("dev_rows", len(dev_set))
+                mlflow.log_metric("test_rows", len(test_set))
+                
+                # ================================================================
+                # STAGE 3: Fit Transformers on Training Set
+                # ================================================================
+                self.logger.info('\n[Stage 3] Fitting Transformers on Training Data...')
+                
+                train_set = self.outlier_handler.handle_outliers(train_set, fit=True)
+                # Encoding now happens AFTER split
+                train_set = self.feature_encoder.encode_features(train_set, fit=True)
+                train_set = self.feature_transformer.transform_features(train_set, fit=True)
+                train_set = self._drop_columns(train_set)
+                
+                # ================================================================
+                # STAGE 4: Transform Dev Set
+                # ================================================================
+                self.logger.info('\n[Stage 4] Transforming Dev Set...')
+                
+                dev_set = self.outlier_handler.handle_outliers(dev_set, fit=False)
+                dev_set = self.feature_encoder.encode_features(dev_set, fit=False)
+                dev_set = self.feature_transformer.transform_features(dev_set, fit=False)
+                dev_set = self._drop_columns(dev_set)
+                
+                # ================================================================
+                # STAGE 5: Transform Test Set
+                # ================================================================
+                self.logger.info('\n[Stage 5] Transforming Test Set...')
+                
+                test_set = self.outlier_handler.handle_outliers(test_set, fit=False)
+                test_set = self.feature_encoder.encode_features(test_set, fit=False)
+                test_set = self.feature_transformer.transform_features(test_set, fit=False)
+                test_set = self._drop_columns(test_set)
+                
+                # ================================================================
+                # STAGE 6: Final Validation
+                # ================================================================
+                self.logger.info('\n[Stage 6] Final Validation...')
+                
+                #  Validate processed data
+                self.data_validator.validate_processed_data(train_set, dev_set, test_set)
+                
+                # ================================================================
+                # STAGE 7: Save Outputs
+                # ================================================================
+                self.logger.info('\n[Stage 7] Saving Outputs...')
+                self._save_datasets(train_set, dev_set, test_set)
+                self._save_pipeline()
+                #  Save processing metadata
+                self._save_metadata(train_set, dev_set, test_set)
+                mlflow.set_tag(
+                    "decision_note",
+                    "Preprocessing v2: ID columns dropped, log-transform applied, zero leakage enforced.",
+                )
             
             self.logger.info('\n' + '=' * 80)
             self.logger.info('PREPROCESSING PIPELINE COMPLETED SUCCESSFULLY')

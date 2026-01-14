@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from eda import DataQuality, DataOverview, Visualizations
 from utils import ensure_directory, setup_logger, Timer, write_json  
+from utils.mlflow_utils import mlflow_stage_run
 
 
 class EDAPipelineError(Exception):
@@ -51,7 +52,7 @@ class EDAPipeline:
     
     def execute(self) -> Dict[str, Any]:  
         """
-        Execute complete EDA pipeline.
+        Execute complete EDA pipeline with MLflow tracking.
         
         Returns:
             Dictionary with results from all stages
@@ -59,12 +60,14 @@ class EDAPipeline:
         Raises:
             EDAPipelineError: If pipeline execution fails
         """
-        mlflow.set_tracking_uri('sqlite:///employee_salary_preds.db')
-        mlflow.set_experiment(experiment_name='Employee_Salary_Prediction-EDA')
         try:
-            # ===== STAGE 1: DATA OVERVIEW =====
-            with mlflow.start_run(run_name='Complete EDA Pipeline') as parent_run:
-
+            # top-level MLflow run for the EDA stage
+            with mlflow_stage_run(
+                stage="eda",
+                run_name="complete_eda_pipeline",
+                tags={"pipeline": "eda", "config_path": self.config_path},
+            ):
+                # ===== STAGE 1: DATA OVERVIEW =====
                 with mlflow.start_run(run_name='Data_Overview', nested=True):
                     with Timer('Data overview', self.logger):
                         overview = DataOverview(self.config_path)
@@ -78,8 +81,10 @@ class EDAPipeline:
                             'numeric_columns': overview_results.get('numeric_columns', []),
                             'categorical_columns': overview_results.get('categorical_columns', [])
                         }
+                        mlflow.log_metric("n_rows", df.shape[0])
+                        mlflow.log_metric("n_columns", df.shape[1])
                     
-            # ===== STAGE 2: DATA QUALITY CHECKS =====
+                # ===== STAGE 2: DATA QUALITY CHECKS =====
                 with mlflow.start_run(run_name='Data_Quality', nested=True):
                     with Timer('Data Quality Checks', self.logger):
                         quality_checks = DataQuality(config)
@@ -90,8 +95,15 @@ class EDAPipeline:
                             'duplicate_count': quality_results.get('duplicate_count', 0),
                             'outlier_columns': len(quality_results.get('outliers', {}))
                         }
+                        mlflow.log_metric("missing_columns", self.results['quality']['missing_columns'])
+                        mlflow.log_metric("duplicate_count", self.results['quality']['duplicate_count'])
+                        mlflow.log_metric("outlier_columns", self.results['quality']['outlier_columns'])
+                        mlflow.set_tag(
+                            "data_quality_note",
+                            "Baseline EDA checks; no irreversible schema changes applied.",
+                        )
                     
-            # ===== STAGE 3: VISUALIZATIONS =====
+                # ===== STAGE 3: VISUALIZATIONS =====
                 with mlflow.start_run(run_name='Data_visualizations', nested=True):
                     with Timer('Data visualizations', self.logger):
                         visuals = Visualizations(config)
@@ -99,9 +111,13 @@ class EDAPipeline:
                         
                         self.results['visualizations'] = visual_results
             
-            # ===== GENERATE SUMMARY REPORT =====
+                # ===== GENERATE SUMMARY REPORT =====
                 with mlflow.start_run(run_name='Generate_summary_report', nested=True):
                     self._generate_summary_report(df, config)
+                    mlflow.set_tag(
+                        "decision_note",
+                        "EDA summary generated to support downstream preprocessing decisions.",
+                    )
             
             self.logger.info("=" * 80)
             self.logger.info("✓ EDA PIPELINE EXECUTION COMPLETED SUCCESSFULLY")

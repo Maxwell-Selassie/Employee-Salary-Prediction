@@ -37,6 +37,7 @@ from sklearn.metrics import (
 )
 
 from utils import read_yaml, ensure_directory, get_timestamp, LoggerMixin
+from utils.mlflow_utils import mlflow_stage_run
 
 
 class ModelTrainingPipeline(LoggerMixin):
@@ -540,21 +541,29 @@ Decision rationale:
     
     def run(self) -> Dict[str, Any]:
         """
-        Execute complete training pipeline.
+        Execute complete training pipeline with MLflow stage tracking.
         
         Returns:
             Dictionary with pipeline results
         """
         try:
-            # Setup
-            self.setup_mlflow()
-            self.load_data()
-            
-            # Train all models
-            self.train_models()
-            
-            # Select and register best
-            self.select_and_register_best_model()
+            with mlflow_stage_run(
+                stage="training",
+                run_name=f"training_session_{self.timestamp}",
+                tags={
+                    "project": self.config["project"]["name"],
+                    "version": self.config["project"]["version"],
+                },
+            ):
+                # Setup
+                self.setup_mlflow()
+                self.load_data()
+                
+                # Train all models
+                self.train_models()
+                
+                # Select and register best
+                self.select_and_register_best_model()
             
             self.logger.info("\n" + "="*80)
             self.logger.info("PIPELINE COMPLETED SUCCESSFULLY")
@@ -574,8 +583,9 @@ Decision rationale:
 
 def main():
     """Entry point."""
-    pipeline = ModelTrainingPipeline("config/training_config.yaml")
-    results = pipeline.run()
+    config = read_yaml("config/model_training_config.yaml")
+    pipeline = ModelTrainingPipeline(config)
+    _ = pipeline.run()
     return 0
 
 

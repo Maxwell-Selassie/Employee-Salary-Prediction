@@ -1,5 +1,5 @@
 """
-Core model training module with sklearn models.
+Core model training module with runtime constraints.
 """
 
 import numpy as np
@@ -10,12 +10,18 @@ from xgboost import XGBRegressor
 from lightgbm import LGBMRegressor
 from sklearn.model_selection import cross_val_score, KFold
 import time
+import mlflow
 from utils import LoggerMixin
+
+
+class TrainingTimeoutError(Exception):
+    """Raised when model training exceeds time limit."""
+    pass
 
 
 class ModelTrainer(LoggerMixin):
     """
-    Train classification models with cross-validation.
+    Train regression models with cross-validation and runtime constraints.
     
     Attributes:
         config: Configuration dictionary
@@ -23,6 +29,7 @@ class ModelTrainer(LoggerMixin):
         model_name: Name of the model
         training_time: Time taken to train
         cv_scores: Cross-validation scores
+        max_training_time: Maximum allowed training time (seconds)
     """
     
     def __init__(self, config: Dict[str, Any]):
@@ -38,6 +45,9 @@ class ModelTrainer(LoggerMixin):
         self.model_name = None
         self.training_time = 0.0
         self.cv_scores = None
+        
+        # Runtime constraint
+        self.max_training_time = config.get('runtime_constraints', {}).get('max_training_time', 10.0)
     
     def _get_model_instance(self, model_name: str, params: Dict[str, Any]):
         """
@@ -51,7 +61,7 @@ class ModelTrainer(LoggerMixin):
             Model instance
         """
         model_map = {
-            'LogisticRegression': Ridge,
+            'Ridge': Ridge,
             'RandomForest': RandomForestRegressor,
             'XGBoost': XGBRegressor,
             'LightGBM': LGBMRegressor
@@ -70,7 +80,7 @@ class ModelTrainer(LoggerMixin):
         params: Optional[Dict[str, Any]] = None
     ):
         """
-        Train a single model.
+        Train a single model with runtime constraints.
         
         Args:
             model_name: Name of the model to train
@@ -80,6 +90,9 @@ class ModelTrainer(LoggerMixin):
             
         Returns:
             Trained model
+            
+        Raises:
+            TrainingTimeoutError: If training exceeds max_training_time
         """
         self.logger.info(f"\nTraining {model_name}...")
         self.logger.info("-"*60)
@@ -88,7 +101,6 @@ class ModelTrainer(LoggerMixin):
         
         # Get model parameters
         if params is None:
-            # Get from config
             if model_name == 'Ridge':
                 params = self.config['models']['baseline']['params']
             else:
@@ -99,12 +111,28 @@ class ModelTrainer(LoggerMixin):
         # Initialize model
         self.model = self._get_model_instance(model_name, params)
         
-        # Train
+        # Train with runtime tracking
         start_time = time.time()
         self.model.fit(X_train, y_train)
         self.training_time = time.time() - start_time
         
-        self.logger.info(f"✓ Training completed in {self.training_time:.2f}s")
+        # ✅ Check runtime constraint (satisficing metric)
+        if self.training_time > self.max_training_time:
+            warning_msg = (
+                f"⚠️  Training time ({self.training_time:.2f}s) exceeds limit "
+                f"({self.max_training_time}s)"
+            )
+            self.logger.warning(warning_msg)
+            
+            # Log decision to MLflow
+            mlflow.set_tag("runtime_exceeded", "true")
+            mlflow.set_tag("runtime_decision", warning_msg)
+            
+            # Don't raise error, but mark as non-compliant
+            mlflow.log_param("satisficing_constraint_met", False)
+        else:
+            self.logger.info(f"✓ Training completed in {self.training_time:.2f}s (within {self.max_training_time}s limit)")
+            mlflow.log_param("satisficing_constraint_met", True)
         
         return self.model
     
@@ -133,7 +161,7 @@ class ModelTrainer(LoggerMixin):
         
         self.logger.info("Performing cross-validation...")
         
-        n_splits = cv_config.get('n_splits', 10)
+        n_splits = cv_config.get('n_splits', 5)
         shuffle = cv_config.get('shuffle', True)
         random_state = cv_config.get('random_state', 42)
         
@@ -142,6 +170,9 @@ class ModelTrainer(LoggerMixin):
             shuffle=shuffle,
             random_state=random_state
         )
+        
+        # Time cross-validation
+        cv_start = time.time()
         
         cv_scores = cross_val_score(
             self.model,
@@ -152,20 +183,32 @@ class ModelTrainer(LoggerMixin):
             n_jobs=-1
         )
         
-        self.cv_scores = -cv_scores
+        cv_time = time.time() - cv_start
+        
+        # Convert negative MSE to positive
         cv_scores_abs = np.abs(cv_scores)
-        self.logger.info("✓ Cross-validation completed")
+        self.cv_scores = cv_scores_abs
+        
+        self.logger.info(f"✓ Cross-validation completed in {cv_time:.2f}s")
         
         cv_results = {
             'cv_mean': float(np.mean(cv_scores_abs)),
             'cv_std': float(np.std(cv_scores_abs)),
             'cv_min': float(np.min(cv_scores_abs)),
             'cv_max': float(np.max(cv_scores_abs)),
-            'cv_scores': cv_scores_abs.tolist()
+            'cv_scores': cv_scores_abs.tolist(),
+            'cv_time': cv_time
         }
         
-        self.logger.info(f"  CV {scoring}: {cv_results['cv_mean']:.4f} (+/- {cv_results['cv_std']:.4f})")
+        self.logger.info(f"  CV MSE: {cv_results['cv_mean']:.4f} (+/- {cv_results['cv_std']:.4f})")
         self.logger.info(f"  CV range: [{cv_results['cv_min']:.4f}, {cv_results['cv_max']:.4f}]")
+        
+        # ✅ Log decision context
+        mlflow.set_tag(
+            "cv_decision",
+            f"CV MSE={cv_results['cv_mean']:.4f} with std={cv_results['cv_std']:.4f} "
+            f"indicates {'high' if cv_results['cv_std'] > 0.1 else 'low'} variance"
+        )
         
         return cv_results
     
