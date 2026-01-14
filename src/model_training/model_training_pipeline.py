@@ -36,6 +36,9 @@ from sklearn.metrics import (
     root_mean_squared_error
 )
 
+import sys
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 from utils import read_yaml, ensure_directory, get_timestamp, LoggerMixin
 from utils.mlflow_utils import mlflow_stage_run
 

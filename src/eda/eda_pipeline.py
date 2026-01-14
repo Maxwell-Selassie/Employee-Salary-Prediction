@@ -1,7 +1,7 @@
 
 """
 EDA Pipeline Orchestrator
-ENHANCED: Better error handling, result tracking, report generation
+Better error handling, result tracking, report generation
 """
 
 import warnings

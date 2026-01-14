@@ -9,9 +9,9 @@ project:
 
 # Data Configuration
 data:
-  train_data: "data/train.csv"
-  val_data: "data/val.csv"
-  test_data: "data/test.csv"
+  train_data: "data/processed/train_set.csv"
+  val_data: "data/processed/dev_set.csv"
+  test_data: "data/processed/test_set.csv"
   target_column: "Current_Salary_log"
 
 # MLflow Configuration

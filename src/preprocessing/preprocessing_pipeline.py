@@ -6,7 +6,7 @@ from typing import Tuple, Dict, Any
 import warnings
 warnings.filterwarnings('ignore')
 import sys
-
+import mlflow
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Existing imports
